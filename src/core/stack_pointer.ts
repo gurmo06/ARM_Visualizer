@@ -8,7 +8,7 @@
   * - Enforce 16-byte alignment on writes (AAPCS64).
   */
 
-export type Word = bigint;              // 64-bit
+import type { Word } from "./register_file"     // 64-bit
 
 /* Stack Pointer */
 export class StackPointer
@@ -26,8 +26,8 @@ export class StackPointer
 
     /*----------------- Write Ports (Sequential) -----------------*/
 
-    /* Sequential: commit on clock edge */
-    commit(next: Word): void
+    /* Sequential: write on clock edge */
+    write(next: Word): void
     {
         // Assert 16-byte alignment
         if ((next & 0xFn) !== 0n)

@@ -1,5 +1,5 @@
-import type { CPUState, Instruction, ALUInstruction } from "./hw-components/types";
-import { ALU } from "./hw-components/alu";
+import type { CPUState, Instruction, ALUInstruction } from "../defunct/types";
+import { ALU } from "../core/alu";
 
 export class CPU
 {
@@ -54,7 +54,6 @@ export class CPU
             // ADD instruction, send as ADD to ALU
             case "ADD":
             {
-                // Send ADD ALUInstruction to ALU for execution
                 const aluInstr: ALUInstruction =
                 {
                     op: "ADD",
@@ -62,6 +61,10 @@ export class CPU
                     b: this.state.regs[instr.rm!],
                     dest: this.state.regs[instr.rd!]
                 };
+                this.alu.alu_exec(aluInstr);
+                this.state.regs[instr.rd!] = aluInstr.dest;
+                this.state.pc += 1n;
+                break;
             }
         }
     }

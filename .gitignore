@@ -1,2 +1,5 @@
 NOTES.txt
 .gitignore
+.DS_Store
+node_modules/
+dist/
