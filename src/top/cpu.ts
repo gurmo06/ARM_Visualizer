@@ -1,71 +1,133 @@
-import type { CPUState, Instruction, ALUInstruction } from "../defunct/types";
+import type { CpuState, Instruction, RegisterOperand, Word } from "../sim/types";
 import { ALU } from "../core/alu";
 
 export class CPU
 {
-    private program: Instruction[];     // Program loaded into the CPU, shouldn't change during execution
-    private state: CPUState;            // Current state of the CPU, changes during execution
-    private alu: ALU;                   // ALU instance for all operations
+    private program: Instruction[];
+    private state: CpuState;
+    private alu: ALU;
 
-    // Initializes the CPU with a program and initial
-    // zeroed register values if registers not provided
-    constructor(prog: Instruction[], initRegs: bigint[] = Array(32).fill(0))
+    constructor(prog: Instruction[], initRegs: Word[] = Array(31).fill(0n))
     {
         this.program = prog;
-        this.state = { regs: [...initRegs], pc: 0n, halt: (prog.length === 0) };
+        this.state = this.createInitialState(prog.length === 0, initRegs);
         this.alu = new ALU();
     }
 
-    // Returns a read-only snapshot of the current CPU state
-    public current_state(): Readonly<CPUState>
+    public current_state(): Readonly<CpuState>
     {
-        // Return a copy to prevent external mutation
-        return { regs: [...this.state.regs], pc: this.state.pc, halt: this.state.halt };
+        return {
+            ...this.state,
+            registers: [...this.state.registers],
+            pstate: { ...this.state.pstate }
+        };
     }
 
-    // Resets the CPU state to initial conditions, can optionally
-    // load a new program and initial register values
-    public reset_state(prog?: Instruction[], initRegs: bigint[] = Array(32).fill(0)): void
+    public reset_state(prog?: Instruction[], initRegs: Word[] = Array(31).fill(0n)): void
     {
-        // Load new program if provided
         if (prog)
-            { this.program = prog; }
+        {
+            this.program = prog;
+        }
 
-        // Reset CPU state
-        this.state = { regs: [...initRegs], pc: 0n, halt: (this.program.length === 0) };
+        this.state = this.createInitialState(this.program.length === 0, initRegs);
     }
 
-    // Executes a single instruction cycle
     public step(): void
     {
-        // If halted, do nothing
-        if (this.state.halt)
-            { return; }
-
-        // If PC is out of bounds, halt the CPU
-        if (this.state.pc < 0n || this.state.pc >=  BigInt(this.program.length))
-            { this.state.halt = true; return; }
-        
-
-        // Fetch the current instruction
-        const instr = this.program[Number(this.state.pc)];
-        switch (instr.op)
+        if (this.state.halted)
         {
-            // ADD instruction, send as ADD to ALU
+            return;
+        }
+
+        const instructionIndex = Number(this.state.pc / 4n);
+
+        if (instructionIndex < 0 || instructionIndex >= this.program.length)
+        {
+            this.state.halted = true;
+            return;
+        }
+
+        const instr = this.program[instructionIndex];
+
+        switch (instr.opcode)
+        {
             case "ADD":
             {
-                const aluInstr: ALUInstruction =
+                if (!instr.rd || !instr.rn || !instr.rm)
                 {
+                    this.fault("ADD requires Rd, Rn, and Rm.");
+                    return;
+                }
+
+                const result = this.alu.alu_exec({
                     op: "ADD",
-                    a: this.state.regs[instr.rn!],
-                    b: this.state.regs[instr.rm!],
-                    dest: this.state.regs[instr.rd!]
-                };
-                this.alu.alu_exec(aluInstr);
-                this.state.regs[instr.rd!] = aluInstr.dest;
-                this.state.pc += 1n;
+                    a: this.readRegisterOperand(instr.rn),
+                    b: this.readRegisterOperand(instr.rm),
+                    width: instr.width
+                });
+
+                this.writeRegisterOperand(instr.rd, result.value);
+                this.state.pc += 4n;
+                break;
+            }
+            case "HLT":
+            {
+                this.state.halted = true;
+                break;
+            }
+            default:
+            {
+                this.fault(`${instr.opcode} execution is not implemented yet.`);
                 break;
             }
         }
+    }
+
+    private createInitialState(halted: boolean, initRegs: Word[]): CpuState
+    {
+        return {
+            registers: initRegs.slice(0, 31),
+            sp: 0n,
+            pc: 0n,
+            pstate: {
+                negative: false,
+                zero: false,
+                carry: false,
+                overflow: false
+            },
+            halted
+        };
+    }
+
+    private readRegisterOperand(operand: RegisterOperand): Word
+    {
+        if (operand.encoded === 31)
+        {
+            return operand.role === "stack-pointer" ? this.state.sp : 0n;
+        }
+
+        return this.state.registers[operand.encoded];
+    }
+
+    private writeRegisterOperand(operand: RegisterOperand, value: Word): void
+    {
+        if (operand.encoded === 31)
+        {
+            if (operand.role === "stack-pointer")
+            {
+                this.state.sp = value;
+            }
+
+            return;
+        }
+
+        this.state.registers[operand.encoded] = value;
+    }
+
+    private fault(message: string): void
+    {
+        this.state.fault = message;
+        this.state.halted = true;
     }
 }

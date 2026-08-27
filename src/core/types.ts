@@ -1,10 +1,1 @@
-export type ALUOpcode = "ADD";
-export type Word = bigint;
-
-export interface ALUInstruction
-{
-    op: ALUOpcode;
-    a: Word;
-    b: Word;
-    dest: Word;
-}
+export type { ALUInstruction, ALUOpcode, ALUResult, Word } from "../sim/types";

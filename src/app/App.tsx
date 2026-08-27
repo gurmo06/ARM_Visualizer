@@ -5,23 +5,32 @@ const sampleProgram: Instruction[] = [
         id: "0",
         address: 0n,
         opcode: "MOVZ",
-        destination: { kind: "register", index: 0, width: 64 },
-        immediate: 2n,
-        shiftAmount: 0,
+        format: "move-wide",
+        rd: { kind: "register", encoded: 0, role: "general", width: 64 },
+        immediate: { kind: "immediate", value: 2n, width: 64, shift: 0, signed: false },
         width: 64,
+        operands: [
+            { kind: "register", encoded: 0, role: "general", width: 64 },
+            { kind: "immediate", value: 2n, width: 64, shift: 0, signed: false }
+        ],
+        writesFlags: false,
         sourceText: "MOVZ X0, #2"
     },
     {
         id: "1",
         address: 4n,
         opcode: "ADD",
-        destination: { kind: "register", index: 2, width: 64 },
-        sources: [
-            { kind: "register", index: 0, width: 64 },
-            { kind: "register", index: 1, width: 64 }
+        format: "data-processing-register",
+        rd: { kind: "register", encoded: 2, role: "general", width: 64 },
+        rn: { kind: "register", encoded: 0, role: "general", width: 64 },
+        rm: { kind: "register", encoded: 1, role: "general", width: 64 },
+        operands: [
+            { kind: "register", encoded: 2, role: "general", width: 64 },
+            { kind: "register", encoded: 0, role: "general", width: 64 },
+            { kind: "register", encoded: 1, role: "general", width: 64 }
         ],
         width: 64,
-        updatesFlags: false,
+        writesFlags: false,
         sourceText: "ADD X2, X0, X1"
     }
 ];

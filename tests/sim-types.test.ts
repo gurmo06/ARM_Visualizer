@@ -9,7 +9,10 @@ describe("shared simulator types", () =>
             id: "0",
             address: 0n,
             opcode: "HLT",
+            format: "system",
             width: 64,
+            operands: [],
+            writesFlags: false,
             sourceText: "HLT"
         };
 
