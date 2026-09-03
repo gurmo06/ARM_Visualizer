@@ -179,7 +179,10 @@ export class CPU
     private executeAddSub(instr: Instruction, nextPc: Word): void
     {
         const rn = this.read(this.requireRn(instr));
-        const b = instr.immediate ? materializeImmediate(instr.immediate) : this.read(this.requireRm(instr));
+        const rm = instr.rm ? this.read(instr.rm) : undefined;
+        const b = instr.immediate
+            ? materializeImmediate(instr.immediate)
+            : this.applyInstructionShift(rm ?? this.read(this.requireRm(instr)), instr);
         const op = instr.opcode === "SUB" || instr.opcode === "SUBS" || instr.opcode === "CMP"
             ? "SUB"
             : "ADD";
@@ -204,7 +207,7 @@ export class CPU
         const result = this.alu.alu_exec({
             op: instr.opcode as ALUOpcode,
             a: this.read(this.requireRn(instr)),
-            b: this.read(this.requireRm(instr)),
+            b: this.applyInstructionShift(this.read(this.requireRm(instr)), instr),
             width: instr.width
         });
 
@@ -267,6 +270,16 @@ export class CPU
 
         this.pc = shouldBranch ? this.requireBranch(instr).target : nextPc;
         this.record("execute", shouldBranch ? "Compare branch taken." : "Compare branch not taken.");
+    }
+
+    private applyInstructionShift(value: Word, instr: Instruction): Word
+    {
+        if (!instr.shift)
+        {
+            return value;
+        }
+
+        return shift(value, instr.shift.shiftKind, instr.shift.amount, instr.width);
     }
 
     private read(operand: RegisterOperand): Word

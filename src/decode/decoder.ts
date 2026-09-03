@@ -42,6 +42,12 @@ export function decodeLine(sourceText: string, address: Word, index = Number(add
             if (operands[2]?.startsWith("#"))
             {
                 const immediate = parseImmediate(operands[2], width, 0);
+                const shift = operands[3] ? parseAddSubImmediateShift(operands[3]) : undefined;
+
+                if (shift !== undefined)
+                {
+                    immediate.shift = shift;
+                }
 
                 return {
                     id: String(index),
@@ -122,6 +128,7 @@ export function decodeLine(sourceText: string, address: Word, index = Number(add
             const rn = parseRegister(operands[1], "general");
             const rm = parseRegister(operands[2], "general");
             const width = rd.width;
+            const shift = operands[3] ? parseShift(operands[3]) : undefined;
 
             return {
                 id: String(index),
@@ -132,7 +139,8 @@ export function decodeLine(sourceText: string, address: Word, index = Number(add
                 rd,
                 rn,
                 rm,
-                operands: [rd, rn, rm],
+                shift,
+                operands: shift ? [rd, rn, rm, shift] : [rd, rn, rm],
                 writesFlags: false,
                 sourceText
             };
@@ -422,6 +430,18 @@ function parseLslImmediate(text: string): ImmediateOperand["shift"]
     if (!match)
     {
         throw new Error(`Invalid move-wide shift: ${text}.`);
+    }
+
+    return Number(match[1]) as ImmediateOperand["shift"];
+}
+
+function parseAddSubImmediateShift(text: string): ImmediateOperand["shift"]
+{
+    const match = text.trim().match(/^LSL\s+#(0|12)$/i);
+
+    if (!match)
+    {
+        throw new Error(`Invalid add/sub immediate shift: ${text}.`);
     }
 
     return Number(match[1]) as ImmediateOperand["shift"];
