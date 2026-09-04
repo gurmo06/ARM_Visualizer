@@ -379,7 +379,17 @@ function parseEncodedRegister(text: string): RegisterOperand["encoded"]
 
 function inferRegister31Role(text: string, role: "general" | "destination" | "add-sub")
 {
-    if (text === "SP" || role === "add-sub")
+    if (text === "SP")
+    {
+        return "stack-pointer";
+    }
+
+    if (text === "ZR")
+    {
+        return "zero-register";
+    }
+
+    if (role === "add-sub")
     {
         return "stack-pointer";
     }

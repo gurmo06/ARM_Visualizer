@@ -1,10 +1,12 @@
 import { useMemo, useRef, useState } from "react";
 import type { CpuSnapshot } from "../sim/types";
+import { MEMORY_HIGH_ADDRESS, STACK_WINDOW_BYTES } from "../sim/memory_layout";
 import { CPU } from "../top/cpu";
 
 const sampleProgram = `MOVZ X0, #2
 MOVZ X1, #3
 ADD X2, X0, X1
+SUB SP, SP, #16
 STR X2, [SP]
 LDR X3, [SP]
 SUBS X4, X3, #5
@@ -28,6 +30,42 @@ function createCpu(program: string): { cpu?: CPU; snapshot?: CpuSnapshot; error?
 function formatHex(value: bigint, digits = 16): string
 {
     return `0x${value.toString(16).toUpperCase().padStart(digits, "0")}`;
+}
+
+function memoryByte(snapshot: CpuSnapshot | undefined, address: bigint): number
+{
+    return snapshot?.memory.find((cell) => cell.address === address)?.value ?? 0;
+}
+
+function stackRows(snapshot: CpuSnapshot | undefined): bigint[]
+{
+    if (!snapshot)
+    {
+        return [];
+    }
+
+    const rowSize = 16n;
+    const halfWindow = BigInt(STACK_WINDOW_BYTES / 2);
+    const start = snapshot.sp > halfWindow ? snapshot.sp - halfWindow : 0n;
+    const alignedStart = start - (start % rowSize);
+    const rows: bigint[] = [];
+
+    for (let address = alignedStart; address <= MEMORY_HIGH_ADDRESS && rows.length < 8; address += rowSize)
+    {
+        rows.push(address);
+    }
+
+    return rows;
+}
+
+function memoryUsagePercent(snapshot: CpuSnapshot | undefined): number
+{
+    if (!snapshot || snapshot.memorySizeBytes === 0)
+    {
+        return 0;
+    }
+
+    return (snapshot.memory.length / snapshot.memorySizeBytes) * 100;
 }
 
 export function App()
@@ -125,6 +163,10 @@ export function App()
                         <strong>{formatHex(snapshot?.sp ?? 0n)}</strong>
                     </div>
                     <div>
+                        <span>Memory</span>
+                        <strong>{snapshot?.memorySizeBytes ? `${snapshot.memorySizeBytes / 1024} KiB` : "0 KiB"}</strong>
+                    </div>
+                    <div>
                         <span>PSTATE</span>
                         <strong>
                             {snapshot?.pstate.negative ? "N" : "n"}
@@ -162,13 +204,38 @@ export function App()
                 <div className="side-panels">
                     <section>
                         <h2>Memory</h2>
-                        <div className="memory-list">
-                            {snapshot?.memory.length ? snapshot.memory.slice(0, 32).map((cell) => (
-                                <div key={cell.address.toString()}>
-                                    <span>{formatHex(cell.address, 4)}</span>
-                                    <strong>0x{cell.value.toString(16).toUpperCase().padStart(2, "0")}</strong>
+                        <div className="memory-map">
+                            <div className="memory-band stack-band">
+                                <span>Stack</span>
+                                <strong>SP {formatHex(snapshot?.sp ?? 0n, 4)}</strong>
+                            </div>
+                            <div className="memory-band free-band">
+                                <span>Free / Heap</span>
+                                <strong>{snapshot?.memory.length ?? 0} touched bytes</strong>
+                            </div>
+                            <div className="memory-band program-band">
+                                <span>Program</span>
+                                <strong>0x0000</strong>
+                            </div>
+                        </div>
+                        <div className="usage-row">
+                            <span>Used</span>
+                            <strong>{memoryUsagePercent(snapshot).toFixed(2)}%</strong>
+                        </div>
+                        <div className="memory-window">
+                            {stackRows(snapshot).map((address) => (
+                                <div className={address === snapshot?.sp ? "sp-row" : ""} key={address.toString()}>
+                                    <span>{address === snapshot?.sp ? "SP" : formatHex(address, 4)}</span>
+                                    <code>
+                                        {Array.from({ length: 16 }, (_, index) => (
+                                            memoryByte(snapshot, address + BigInt(index))
+                                                .toString(16)
+                                                .toUpperCase()
+                                                .padStart(2, "0")
+                                        )).join(" ")}
+                                    </code>
                                 </div>
-                            )) : <p>No memory writes yet.</p>}
+                            ))}
                         </div>
                     </section>
 

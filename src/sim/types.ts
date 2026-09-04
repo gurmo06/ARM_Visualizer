@@ -178,6 +178,7 @@ export interface CpuState
     registers: Word[];
     sp: Word;
     pc: Word;
+    memorySizeBytes: number;
     pstate: PState;
     halted: boolean;
     fault?: string;

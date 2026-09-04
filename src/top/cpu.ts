@@ -16,6 +16,7 @@ import { materializeImmediate } from "../decode/immgen";
 import { FetchUnit } from "../mem/fetch";
 import { LoadStoreUnit } from "../mem/lsu";
 import { Memory } from "../mem/memory";
+import { INITIAL_STACK_POINTER } from "../sim/memory_layout";
 
 export class CPU
 {
@@ -45,6 +46,7 @@ export class CPU
             registers: [...this.registers],
             sp: this.sp,
             pc: this.pc,
+            memorySizeBytes: this.memory.sizeBytes,
             pstate: this.pstate.read(),
             halted: this.halted,
             fault: this.faultMessage
@@ -76,7 +78,7 @@ export class CPU
             this.registers[i] = initRegs[i];
         }
 
-        this.sp = 0n;
+        this.sp = INITIAL_STACK_POINTER;
         this.pc = 0n;
         this.halted = this.program.length === 0;
         this.faultMessage = undefined;

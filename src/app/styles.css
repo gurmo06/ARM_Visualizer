@@ -210,16 +210,91 @@ strong {
     gap: 20px;
 }
 
-.memory-list,
+.memory-window,
 .event-list {
     overflow: hidden;
     border: 1px solid #e2e7ea;
     border-radius: 8px;
 }
 
-.memory-list p,
 .event-list p {
     padding: 12px;
+}
+
+.memory-map {
+    display: grid;
+    overflow: hidden;
+    min-height: 240px;
+    border: 1px solid #dbe3e6;
+    border-radius: 8px;
+}
+
+.memory-band {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-content: center;
+    gap: 4px;
+    padding: 12px;
+    border-bottom: 1px solid #ffffff;
+}
+
+.memory-band span,
+.usage-row span {
+    color: #62707b;
+    font-size: 0.75rem;
+    font-weight: 800;
+    text-transform: uppercase;
+}
+
+.stack-band {
+    min-height: 62px;
+    background: #dbece6;
+}
+
+.free-band {
+    min-height: 124px;
+    background: #eef3f4;
+}
+
+.program-band {
+    min-height: 50px;
+    background: #d8e2eb;
+}
+
+.usage-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 0;
+}
+
+.memory-window div {
+    display: grid;
+    grid-template-columns: 72px minmax(0, 1fr);
+    gap: 12px;
+    align-items: center;
+    border-bottom: 1px solid #e8edef;
+    padding: 9px 10px;
+}
+
+.memory-window div:last-child {
+    border-bottom: 0;
+}
+
+.memory-window span {
+    color: #62707b;
+    font-size: 0.78rem;
+    font-weight: 800;
+    text-transform: uppercase;
+}
+
+.memory-window code {
+    font-size: 0.78rem;
+    line-height: 1.5;
+}
+
+.sp-row {
+    background: #dff2e9;
 }
 
 .event-list div {

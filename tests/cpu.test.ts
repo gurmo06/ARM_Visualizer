@@ -98,8 +98,10 @@ describe("non-pipelined CPU", () =>
     {
         const cpu = new CPU(`
             MOVZ X0, #4660
+            SUB SP, SP, #16
             STR X0, [SP]
             LDR X1, [SP]
+            ADD SP, SP, #16
             HLT
         `);
 
@@ -107,9 +109,33 @@ describe("non-pipelined CPU", () =>
 
         expect(snapshot.registers[1]).toBe(0x1234n);
         expect(snapshot.memory.slice(0, 2)).toEqual([
-            { address: 0n, value: 0x34 },
-            { address: 1n, value: 0x12 }
+            { address: 0xFFE0n, value: 0x34 },
+            { address: 0xFFE1n, value: 0x12 }
         ]);
+        expect(snapshot.sp).toBe(0xFFF0n);
+    });
+
+    it("initializes SP near the top of the 64 KiB memory space", () =>
+    {
+        const cpu = new CPU("HLT");
+        const snapshot = cpu.run();
+
+        expect(snapshot.memorySizeBytes).toBe(65536);
+        expect(snapshot.sp).toBe(0xFFF0n);
+    });
+
+    it("faults on out-of-range memory access", () =>
+    {
+        const cpu = new CPU(`
+            MOVZ X0, #1
+            STR X0, [SP, #16]
+            HLT
+        `);
+
+        const snapshot = cpu.run();
+
+        expect(snapshot.halted).toBe(true);
+        expect(snapshot.fault).toContain("Memory access out of range");
     });
 
     it("honors XZR writes and reads", () =>

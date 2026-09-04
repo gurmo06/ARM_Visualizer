@@ -1,8 +1,13 @@
 import type { DataSize, MemoryCell, Word } from "../sim/types";
+import { MEMORY_HIGH_ADDRESS, MEMORY_LOW_ADDRESS, MEMORY_SIZE_BYTES } from "../sim/memory_layout";
 
 export class Memory
 {
     private bytes = new Map<string, number>();
+
+    readonly sizeBytes = MEMORY_SIZE_BYTES;
+    readonly lowAddress = MEMORY_LOW_ADDRESS;
+    readonly highAddress = MEMORY_HIGH_ADDRESS;
 
     load(address: Word, size: DataSize, signed = false): Word
     {
@@ -58,6 +63,14 @@ export class Memory
     private assertAligned(address: Word, size: DataSize): void
     {
         const alignment = BigInt(size / 8);
+        const lastAddress = address + alignment - 1n;
+
+        if (address < this.lowAddress || lastAddress > this.highAddress)
+        {
+            throw new Error(
+                `Memory access out of range: 0x${address.toString(16)}..0x${lastAddress.toString(16)}.`
+            );
+        }
 
         if ((address % alignment) !== 0n)
         {

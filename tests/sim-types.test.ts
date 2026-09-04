@@ -19,6 +19,7 @@ describe("shared simulator types", () =>
         const snapshot: CpuSnapshot = {
             cycle: 0,
             pc: instruction.address,
+            memorySizeBytes: 65536,
             halted: true,
             registers: Array.from({ length: 31 }, () => 0n),
             sp: 0n,
