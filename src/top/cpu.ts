@@ -75,7 +75,7 @@ export class CPU
 
         for (let i = 0; i < Math.min(initRegs.length, 31); i += 1)
         {
-            this.registers[i] = initRegs[i];
+            this.registers[i] = applyWidth(initRegs[i], 64);
         }
 
         this.sp = INITIAL_STACK_POINTER;
@@ -288,10 +288,10 @@ export class CPU
     {
         if (operand.encoded === 31)
         {
-            return operand.role === "stack-pointer" ? this.sp : 0n;
+            return applyWidth(operand.role === "stack-pointer" ? this.sp : 0n, operand.width);
         }
 
-        return this.registers[operand.encoded];
+        return applyWidth(this.registers[operand.encoded], operand.width);
     }
 
     private write(operand: RegisterOperand, value: Word): void
@@ -302,11 +302,6 @@ export class CPU
         {
             if (operand.role === "stack-pointer")
             {
-                if ((masked & 0xFn) !== 0n)
-                {
-                    throw new Error("SP not 16-byte aligned.");
-                }
-
                 this.sp = masked;
             }
 

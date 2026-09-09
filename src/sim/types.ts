@@ -169,8 +169,10 @@ export interface PipelineStageSnapshot
 export interface CpuEvent
 {
     cycle: number;
-    kind: "fetch" | "decode" | "execute" | "memory" | "writeback" | "halt" | "fault";
+    kind: "fetch" | "decode" | "execute" | "memory" | "writeback" | "halt" | "fault"
+        | "stall" | "flush" | "forward" | "branch";
     message: string;
+    instanceId?: number;
 }
 
 export interface CpuState

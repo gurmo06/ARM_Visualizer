@@ -17,6 +17,11 @@ export class LoadStoreUnit
 
     effectiveAddress(operand: MemoryOperand, baseValue: Word): Word
     {
+        if (operand.base.role === "stack-pointer" && baseValue % 16n !== 0n)
+        {
+            throw new Error("SP not 16-byte aligned for memory access.");
+        }
+
         if (operand.writeback === "post-index")
         {
             return baseValue;

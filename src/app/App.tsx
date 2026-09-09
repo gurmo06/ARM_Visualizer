@@ -1,7 +1,11 @@
-import { useMemo, useRef, useState } from "react";
-import type { CpuSnapshot } from "../sim/types";
-import { MEMORY_HIGH_ADDRESS, STACK_WINDOW_BYTES } from "../sim/memory_layout";
-import { CPU } from "../top/cpu";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AlertCircle, ChevronLeft, ChevronRight, Cpu, FastForward, FileCheck2, Layers, Monitor, Pause, Play, RotateCcw, StepForward, Upload } from "lucide-react";
+import { decodeAssembly } from "../decode/decoder";
+import type { PipelineSnapshot } from "../sim/pipeline";
+import { PipelineCPU } from "../top/pipeline_cpu";
+import { formatHex } from "./format";
+import { MemoryPanel } from "./MemoryPanel";
+import { PipelineView, StageStrip } from "./PipelineView";
 
 const sampleProgram = `MOVZ X0, #2
 MOVZ X1, #3
@@ -14,244 +18,181 @@ CBZ X4, #8
 MOVZ X5, #99
 HLT`;
 
-function createCpu(program: string): { cpu?: CPU; snapshot?: CpuSnapshot; error?: string }
-{
-    try
-    {
-        const cpu = new CPU(program);
-        return { cpu, snapshot: cpu.snapshot() };
-    }
-    catch (error)
-    {
-        return { error: error instanceof Error ? error.message : String(error) };
-    }
-}
-
-function formatHex(value: bigint, digits = 16): string
-{
-    return `0x${value.toString(16).toUpperCase().padStart(digits, "0")}`;
-}
-
-function memoryByte(snapshot: CpuSnapshot | undefined, address: bigint): number
-{
-    return snapshot?.memory.find((cell) => cell.address === address)?.value ?? 0;
-}
-
-function stackRows(snapshot: CpuSnapshot | undefined): bigint[]
-{
-    if (!snapshot)
-    {
-        return [];
-    }
-
-    const rowSize = 16n;
-    const halfWindow = BigInt(STACK_WINDOW_BYTES / 2);
-    const start = snapshot.sp > halfWindow ? snapshot.sp - halfWindow : 0n;
-    const alignedStart = start - (start % rowSize);
-    const rows: bigint[] = [];
-
-    for (let address = alignedStart; address <= MEMORY_HIGH_ADDRESS && rows.length < 8; address += rowSize)
-    {
-        rows.push(address);
-    }
-
-    return rows;
-}
-
-function memoryUsagePercent(snapshot: CpuSnapshot | undefined): number
-{
-    if (!snapshot || snapshot.memorySizeBytes === 0)
-    {
-        return 0;
-    }
-
-    return (snapshot.memory.length / snapshot.memorySizeBytes) * 100;
-}
+const HISTORY_LIMIT = 256;
 
 export function App()
 {
-    const initial = useMemo(() => createCpu(sampleProgram), []);
-    const cpuRef = useRef<CPU | undefined>(initial.cpu);
+    const initial = useMemo(() => new PipelineCPU(sampleProgram), []);
+    const cpuRef = useRef(initial);
+    const fileRef = useRef<HTMLInputElement>(null);
     const [program, setProgram] = useState(sampleProgram);
-    const [snapshot, setSnapshot] = useState<CpuSnapshot | undefined>(initial.snapshot);
-    const [error, setError] = useState(initial.error);
-
-    function loadProgram(nextProgram = program): void
+    const [loadedProgram, setLoadedProgram] = useState(sampleProgram);
+    const [history, setHistory] = useState<PipelineSnapshot[]>(() => [initial.snapshot()]);
+    const [cursor, setCursor] = useState<number>();
+    const [selectedId, setSelectedId] = useState<number>();
+    const [view, setView] = useState<"machine" | "pipeline">("machine");
+    const [running, setRunning] = useState(false);
+    const [speed, setSpeed] = useState(2);
+    const [error, setError] = useState<string>();
+    const headerRef = useRef<HTMLElement>(null);
+    const latest = history.at(-1)!;
+    const snapshot = history.find((entry) => entry.cycle === cursor) ?? latest;
+    const dirty = program !== loadedProgram;
+    const instructions = useMemo(() => decodeAssembly(loadedProgram), [loadedProgram]);
+    const recorded = history.filter((entry) => entry.cycle <= snapshot.cycle);
+    const focusId = selectedId ?? recorded.flatMap((entry) => entry.pipeline).find((entry) => entry.token)?.token?.instanceId;
+    const occurrences = new Map<string, number>();
+    for (const entry of recorded)
     {
-        const loaded = createCpu(nextProgram);
-        cpuRef.current = loaded.cpu;
-        setSnapshot(loaded.snapshot);
-        setError(loaded.error);
+        for (const current of entry.pipeline)
+        {
+            if (current.token?.instruction) occurrences.set(current.token.instruction.id, current.token.instanceId);
+        }
+    }
+
+    useEffect(() =>
+    {
+        headerRef.current?.scrollIntoView?.({ block: "start" });
+    }, [view]);
+
+    useEffect(() =>
+    {
+        if (!running || dirty || latest.halted) return;
+        const timer = window.setInterval(() =>
+        {
+            const next = cpuRef.current.step();
+            setHistory((previous) => [...previous, next].slice(-HISTORY_LIMIT));
+            if (next.halted) setRunning(false);
+        }, 1000 / speed);
+        return () => window.clearInterval(timer);
+    }, [running, dirty, latest.halted, speed]);
+
+    function loadProgram(source = program): void
+    {
+        setRunning(false);
+        try
+        {
+            const cpu = new PipelineCPU(source);
+            cpuRef.current = cpu;
+            setProgram(source);
+            setLoadedProgram(source);
+            setHistory([cpu.snapshot()]);
+            setCursor(undefined);
+            setSelectedId(undefined);
+            setError(undefined);
+        }
+        catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     }
 
     function step(): void
     {
-        if (!cpuRef.current)
-        {
-            loadProgram();
-            return;
-        }
-
-        setSnapshot(cpuRef.current.step());
-        setError(cpuRef.current.snapshot().fault);
+        setRunning(false);
+        setCursor(undefined);
+        const next = cpuRef.current.step();
+        setHistory((previous) => [...previous, next].slice(-HISTORY_LIMIT));
     }
 
-    function run(): void
+    function inspectCycle(cycle: number): void
     {
-        if (!cpuRef.current)
-        {
-            loadProgram();
-            return;
-        }
-
-        const nextSnapshot = cpuRef.current.run();
-        setSnapshot(nextSnapshot);
-        setError(nextSnapshot.fault);
+        setRunning(false);
+        setCursor(cycle);
     }
 
-    const currentLine = snapshot ? Number(snapshot.pc / 4n) : 0;
+    function inspectInstruction(id: number): void
+    {
+        setSelectedId(id);
+        setView("pipeline");
+    }
+
+    const status = snapshot.fault ? "Fault" : snapshot.halted ? "Halted" : running ? "Running" : snapshot.cycle ? "Paused" : "Ready";
+    const previous = history.find((entry) => entry.cycle === snapshot.cycle - 1);
 
     return (
         <main className="shell">
-            <section className="workspace">
-                <div className="program-pane">
-                    <p className="eyebrow">AArch64 Visualizer</p>
-                    <h1>System Visualizer</h1>
-                    <textarea
-                        aria-label="Assembly program"
-                        spellCheck={false}
-                        value={program}
-                        onChange={(event) => setProgram(event.target.value)}
-                    />
-
-                    <div className="controls">
-                        <button type="button" onClick={() => loadProgram()}>
-                            Reset
-                        </button>
-                        <button type="button" onClick={step} disabled={snapshot?.halted}>
-                            Step
-                        </button>
-                        <button type="button" onClick={run} disabled={snapshot?.halted}>
-                            Run
-                        </button>
-                    </div>
-
-                    <div className="program-lines" aria-label="Program listing">
-                        {program.split(/\r?\n/).map((line, index) => (
-                            <div
-                                className={index === currentLine && !snapshot?.halted ? "active-line" : ""}
-                                key={`${index}-${line}`}
-                            >
-                                <span>{formatHex(BigInt(index * 4), 4)}</span>
-                                <code>{line || " "}</code>
-                            </div>
-                        ))}
-                    </div>
+            <header className="app-header" ref={headerRef}>
+                <div className="brand"><Cpu size={27} /><div><h1>System Visualizer</h1><span>AArch64 / five-stage CPU</span></div></div>
+                <nav className="view-tabs" aria-label="Workspace view">
+                    <button type="button" aria-current={view === "machine" ? "page" : undefined} onClick={() => setView("machine")}><Monitor size={16} /> Machine</button>
+                    <button type="button" aria-current={view === "pipeline" ? "page" : undefined} onClick={() => setView("pipeline")}><Layers size={16} /> Pipeline</button>
+                </nav>
+                <span className={`status-label ${snapshot.fault ? "text-danger" : ""}`}><span className={running ? "status-dot running" : "status-dot"} />{status}</span>
+            </header>
+            <div className="clock-deck">
+            <section className="transport" aria-label="Clock controls">
+                <div className="controls">
+                    <button type="button" className="icon-button" title="Reset and load program" aria-label="Reset and load program" onClick={() => loadProgram()}><RotateCcw size={18} /></button>
+                    <button type="button" className="icon-button" title="Step one clock cycle" aria-label="Step one clock cycle" onClick={step} disabled={dirty || latest.halted}><StepForward size={19} /></button>
+                    <button type="button" className="run-button" onClick={() => { setCursor(undefined); setRunning(!running); }} disabled={dirty || latest.halted}>
+                        {running ? <Pause size={16} /> : <Play size={16} />}{running ? "Pause" : "Run"}
+                    </button>
+                    <label className="speed-control"><span>Clock</span><input aria-label="Clock speed" type="range" min="1" max="16" value={speed} onChange={(event) => setSpeed(Number(event.target.value))} /><output>{speed} Hz</output></label>
                 </div>
-
-                <div className="machine-pane">
-                    <div>
-                        <span>Cycle</span>
-                        <strong>{snapshot?.cycle ?? 0}</strong>
-                    </div>
-                    <div>
-                        <span>PC</span>
-                        <strong>{formatHex(snapshot?.pc ?? 0n)}</strong>
-                    </div>
-                    <div>
-                        <span>SP</span>
-                        <strong>{formatHex(snapshot?.sp ?? 0n)}</strong>
-                    </div>
-                    <div>
-                        <span>Memory</span>
-                        <strong>{snapshot?.memorySizeBytes ? `${snapshot.memorySizeBytes / 1024} KiB` : "0 KiB"}</strong>
-                    </div>
-                    <div>
-                        <span>PSTATE</span>
-                        <strong>
-                            {snapshot?.pstate.negative ? "N" : "n"}
-                            {snapshot?.pstate.zero ? "Z" : "z"}
-                            {snapshot?.pstate.carry ? "C" : "c"}
-                            {snapshot?.pstate.overflow ? "V" : "v"}
-                        </strong>
-                    </div>
-                    <div>
-                        <span>Status</span>
-                        <strong>{snapshot?.halted ? "halted" : "running"}</strong>
-                    </div>
-                    {error && (
-                        <div className="fault">
-                            <span>Fault</span>
-                            <strong>{error}</strong>
-                        </div>
-                    )}
-                </div>
+                <div className="clock-stats"><span>Cycle <b>{snapshot.cycle}</b></span><span>Retired <b>{snapshot.retired}</b></span></div>
             </section>
-
-            <section className="state-grid">
-                <div className="register-panel">
-                    <h2>Registers</h2>
-                    <div className="register-grid">
-                        {(snapshot?.registers ?? []).map((value, index) => (
-                            <div key={index}>
-                                <span>X{index}</span>
-                                <strong>{formatHex(value)}</strong>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-
-                <div className="side-panels">
-                    <section>
-                        <h2>Memory</h2>
-                        <div className="memory-map">
-                            <div className="memory-band stack-band">
-                                <span>Stack</span>
-                                <strong>SP {formatHex(snapshot?.sp ?? 0n, 4)}</strong>
-                            </div>
-                            <div className="memory-band free-band">
-                                <span>Free / Heap</span>
-                                <strong>{snapshot?.memory.length ?? 0} touched bytes</strong>
-                            </div>
-                            <div className="memory-band program-band">
-                                <span>Program</span>
-                                <strong>0x0000</strong>
-                            </div>
-                        </div>
-                        <div className="usage-row">
-                            <span>Used</span>
-                            <strong>{memoryUsagePercent(snapshot).toFixed(2)}%</strong>
-                        </div>
-                        <div className="memory-window">
-                            {stackRows(snapshot).map((address) => (
-                                <div className={address === snapshot?.sp ? "sp-row" : ""} key={address.toString()}>
-                                    <span>{address === snapshot?.sp ? "SP" : formatHex(address, 4)}</span>
-                                    <code>
-                                        {Array.from({ length: 16 }, (_, index) => (
-                                            memoryByte(snapshot, address + BigInt(index))
-                                                .toString(16)
-                                                .toUpperCase()
-                                                .padStart(2, "0")
-                                        )).join(" ")}
-                                    </code>
-                                </div>
-                            ))}
-                        </div>
-                    </section>
-
-                    <section>
-                        <h2>Events</h2>
-                        <div className="event-list">
-                            {snapshot?.events.length ? snapshot.events.map((event, index) => (
-                                <div key={`${event.cycle}-${event.kind}-${index}`}>
-                                    <span>{event.kind}</span>
-                                    <p>{event.message}</p>
-                                </div>
-                            )) : <p>No events yet.</p>}
-                        </div>
-                    </section>
-                </div>
+            <section className="history-bar" aria-label="Cycle history">
+                <button type="button" className="icon-button small" title="Previous recorded cycle" aria-label="Previous recorded cycle" disabled={snapshot.cycle <= history[0].cycle} onClick={() => inspectCycle(snapshot.cycle - 1)}><ChevronLeft size={16} /></button>
+                <input aria-label="Recorded cycle" type="range" min={history[0].cycle} max={latest.cycle || 1} value={snapshot.cycle} disabled={!latest.cycle} onChange={(event) => inspectCycle(Number(event.target.value))} />
+                <button type="button" className="icon-button small" title="Next recorded cycle" aria-label="Next recorded cycle" disabled={snapshot.cycle >= latest.cycle} onClick={() => inspectCycle(snapshot.cycle + 1)}><ChevronRight size={16} /></button>
+                <span className="history-position">{snapshot.cycle} / {latest.cycle}</span>
+                <button type="button" className="live-button" aria-pressed={cursor === undefined} onClick={() => setCursor(undefined)} title="Return to latest cycle"><FastForward size={14} /> Live</button>
             </section>
+            </div>
+            {(error || snapshot.fault) && <div className="fault-banner" role="alert"><AlertCircle size={18} /><span>{error ?? snapshot.fault}</span></div>}
+            {view === "pipeline" ? <PipelineView snapshot={snapshot} history={history} selectedId={focusId} onSelect={setSelectedId} onCycle={inspectCycle} /> : <>
+                <section className="machine-overview">
+                    <div className="program-pane">
+                        <div className="section-heading"><h2>Assembly program</h2><div className="controls">
+                            <input type="file" ref={fileRef} accept=".s,.asm,.txt" className="hidden-input" aria-label="Assembly file" onChange={async (event) =>
+                            {
+                                const file = event.target.files?.[0];
+                                event.target.value = "";
+                                if (!file) return;
+                                setRunning(false);
+                                try
+                                {
+                                    if (file.size > 1024 * 1024) throw new Error("Assembly file exceeds 1 MiB.");
+                                    const source = await file.text();
+                                    setProgram(source);
+                                    loadProgram(source);
+                                }
+                                catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+                            }} />
+                            <button type="button" className="icon-button small" title="Open assembly file" aria-label="Open assembly file" onClick={() => fileRef.current?.click()}><Upload size={16} /></button>
+                            <button type="button" className="icon-button small" title="Load program" aria-label="Load program" onClick={() => loadProgram()}><FileCheck2 size={17} /></button>
+                        </div></div>
+                        <textarea aria-label="Assembly program" spellCheck={false} value={program} onChange={(event) => { setRunning(false); setProgram(event.target.value); setError(undefined); }} />
+                        <div className="editor-meta"><span>{instructions.length} loaded instructions</span><span>{dirty ? "Unloaded changes" : "Loaded"}</span></div>
+                        <div className="program-lines" aria-label="Program listing">
+                            {instructions.map((instruction) =>
+                            {
+                                const active = snapshot.pipeline.filter((entry) => entry.valid && entry.token?.instruction?.id === instruction.id);
+                                const occurrence = active[0]?.token?.instanceId ?? occurrences.get(instruction.id);
+                                return <button type="button" key={instruction.id} disabled={occurrence === undefined} className={active.length ? "active-line" : ""}
+                                    onClick={() => occurrence !== undefined && inspectInstruction(occurrence)} title={occurrence !== undefined ? `Inspect instance #${occurrence}` : "Not fetched yet"}>
+                                    <span>{formatHex(instruction.address, 4)}</span><code>{instruction.sourceText}</code><span className="line-stages">{active.map((entry) => entry.name).join(" ")}</span>
+                                </button>;
+                            })}
+                        </div>
+                    </div>
+                    <div className="machine-state">
+                        <div className="state-summary">
+                            <div><span>Architectural PC</span><code>{formatHex(snapshot.pc, 4)}</code></div>
+                            <div><span>Fetch PC</span><code>{formatHex(snapshot.fetchPc, 4)}</code></div>
+                            <div><span>Stack pointer</span><code>{formatHex(snapshot.sp, 4)}</code></div>
+                            <div className="flags"><span>PSTATE</span><div>{(["negative", "zero", "carry", "overflow"] as const).map((key, i) => <span className={snapshot.pstate[key] ? "flag set" : "flag"} key={key}>{"NZCV"[i]} <b>{Number(snapshot.pstate[key])}</b></span>)}</div></div>
+                        </div>
+                        <div className="section-heading"><h2>Registers</h2><span className="muted">X0-X30 / 64-bit</span></div>
+                        <div className="register-grid">{snapshot.registers.map((value, index) => <div className={previous && previous.registers[index] !== value ? "changed" : ""} key={index}><span>X{index}</span><code>{formatHex(value)}</code></div>)}</div>
+                        <div className="zero-register"><span>XZR</span><code>{formatHex(0n)}</code><span>Read-only zero</span></div>
+                    </div>
+                </section>
+                <section className="pipeline-preview"><div className="section-heading"><h2>Pipeline activity</h2><button type="button" onClick={() => setView("pipeline")}><Layers size={15} /> Open pipeline</button></div><StageStrip snapshot={snapshot} selectedId={focusId} onSelect={inspectInstruction} /></section>
+                <MemoryPanel snapshot={snapshot} />
+            </>}
+            <section className="events-section"><div className="section-heading"><h2>Cycle events</h2><span className="muted">Cycle {snapshot.cycle}</span></div>
+                <div className="event-list">{snapshot.events.length ? snapshot.events.map((event, index) => <div key={index} className={`event-${event.kind}`}><span>{event.kind}</span>{event.instanceId !== undefined && <button type="button" onClick={() => inspectInstruction(event.instanceId!)} title={`Inspect instruction #${event.instanceId}`}>#{event.instanceId}</button>}<p>{event.message}</p></div>) : <p className="empty-state">No events this cycle</p>}</div>
+            </section>
+            <footer><span>AArch64 subset / idealized five-stage microarchitecture</span><span>64 KiB data RAM / {history.length} retained snapshots</span></footer>
         </main>
     );
 }
