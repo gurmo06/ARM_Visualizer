@@ -110,7 +110,7 @@ export function App()
     return (
         <main className="shell">
             <header className="app-header" ref={headerRef}>
-                <div className="brand"><Cpu size={27} /><div><h1>System Visualizer</h1><span>AArch64 / five-stage CPU</span></div></div>
+                <div className="brand"><Cpu size={27} /><div><h1>ARM Visualizer</h1><span>AArch64 / five-stage CPU</span></div></div>
                 <nav className="view-tabs" aria-label="Workspace view">
                     <button type="button" aria-current={view === "machine" ? "page" : undefined} onClick={() => setView("machine")}><Monitor size={16} /> Machine</button>
                     <button type="button" aria-current={view === "pipeline" ? "page" : undefined} onClick={() => setView("pipeline")}><Layers size={16} /> Pipeline</button>
