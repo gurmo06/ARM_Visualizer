@@ -14,10 +14,10 @@
 html { scroll-padding-top: 150px; }
 body { margin: 0; min-width: 320px; }
 button, input, textarea { font: inherit; }
-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid var(--border); border-radius: 4px; background: white; color: inherit; padding: 8px 12px; font-size: 12px; font-weight: 600; cursor: pointer; }
-button:hover:not(:disabled) { border-color: #8caaa3; background: #eff6f3; }
+button, .source-link { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid var(--border); border-radius: 4px; background: white; color: inherit; padding: 8px 12px; font-size: 12px; font-weight: 600; cursor: pointer; }
+button:hover:not(:disabled), .source-link:hover { border-color: #8caaa3; background: #eff6f3; }
 button:disabled { color: #89929a; cursor: default; }
-button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, .source-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 button svg { flex-shrink: 0; }
 button[aria-pressed="true"] { border-color: var(--accent); background: #e6f2ed; }
 input[type="range"] { accent-color: var(--accent); min-width: 40px; height: 18px; cursor: pointer; }
@@ -41,6 +41,7 @@ code { overflow-wrap: anywhere; }
 .view-tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; padding-inline: 18px; color: var(--muted); }
 .view-tabs button[aria-current="page"] { border-bottom-color: var(--accent); color: var(--accent); }
 .status-label { display: flex; align-items: center; gap: 7px; margin-left: auto; font-size: 12px; }
+.source-link { flex-shrink: 0; white-space: nowrap; text-decoration: none; }
 .status-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #8b959e; }
 .status-dot.running { background: #188367; }
 .clock-deck { position: sticky; top: 0; z-index: 10; background: #f7f8fa; }
@@ -180,6 +181,7 @@ footer { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wr
 
 @media (max-width: 1050px) {
     .shell { padding-inline: 24px; }
+    .app-header { gap: 16px; }
     .machine-overview { grid-template-columns: minmax(260px, 0.85fr) minmax(0, 1fr); gap: 24px; }
     .latch-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .view-tabs { margin-left: 0; }
@@ -189,12 +191,13 @@ footer { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wr
 
 @media (max-width: 720px) {
     .shell { padding-inline: 16px; }
-    .app-header { flex-wrap: wrap; gap: 0; padding-top: 18px; min-height: 120px; }
+    .app-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 8px; padding-top: 18px; min-height: 120px; }
     .brand { order: 0; }
     h1 { font-size: 17px; }
     .status-label { order: 1; }
-    .view-tabs { order: 2; width: 100%; min-height: 45px; margin-top: 10px; }
+    .view-tabs { order: 2; min-width: 0; min-height: 45px; margin-top: 10px; }
     .view-tabs button { padding: 10px 16px; }
+    .source-link { order: 3; margin-top: 10px; padding: 7px 10px; justify-self: end; align-self: center; }
     .transport { flex-wrap: wrap; gap: 13px; }
     .transport > .controls { width: 100%; gap: 6px; }
     .speed-control { margin-left: auto; gap: 5px; }
@@ -221,6 +224,7 @@ footer { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wr
 }
 
 @media (max-width: 380px) {
+    .view-tabs button { padding-inline: 8px; }
     .speed-control > span { display: none; }
     .speed-control input { width: 50px; }
     .brand > svg { width: 22px; }

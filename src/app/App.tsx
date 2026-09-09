@@ -6,6 +6,7 @@ import { PipelineCPU } from "../top/pipeline_cpu";
 import { formatHex } from "./format";
 import { MemoryPanel } from "./MemoryPanel";
 import { PipelineView, StageStrip } from "./PipelineView";
+import githubMark from "./assets/github.svg";
 
 const sampleProgram = `MOVZ X0, #2
 MOVZ X1, #3
@@ -116,6 +117,16 @@ export function App()
                     <button type="button" aria-current={view === "pipeline" ? "page" : undefined} onClick={() => setView("pipeline")}><Layers size={16} /> Pipeline</button>
                 </nav>
                 <span className={`status-label ${snapshot.fault ? "text-danger" : ""}`}><span className={running ? "status-dot running" : "status-dot"} />{status}</span>
+                <a
+                    className="source-link"
+                    href="https://github.com/gurmo06/ARM_Visualizer"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="View source on GitHub (opens in a new tab)"
+                >
+                    <img src={githubMark} alt="" width="16" height="16" />
+                    Source
+                </a>
             </header>
             <div className="clock-deck">
             <section className="transport" aria-label="Clock controls">
