@@ -11,7 +11,7 @@ The app is built with **TypeScript, React, and Vite** and runs entirely in the b
 It models an educational AArch64 subset with explicit timing assumptions; it is not
 a complete Arm emulator or a timing model of a specific Cortex processor.
 
-[Source code](https://github.com/gurmo06/ARM_Visualizer)
+**Live site:** https://arm-visualizer.pages.dev/
 
 ## What Works Today
 
