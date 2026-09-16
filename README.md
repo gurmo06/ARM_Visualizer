@@ -1,129 +1,298 @@
-# System Visualizer
+# ARM Visualizer
 
-An interactive AArch64 subset simulator with a five-stage, single-issue, in-order pipeline.
-The React frontend runs entirely in the browser. The sequential `CPU` remains available as
-a reference engine; the website uses `PipelineCPU`.
+A browser-based AArch64 CPU simulator for exploring how assembly instructions change
+registers, flags, memory, and the instructions moving through a pipeline.
 
-## Development
+The current implementation uses a **five-stage, single-issue, in-order pipeline**.
+You can run a program, advance one clock cycle at a time, and focus on an individual
+instruction to inspect its operands, forwarding paths, stalls, results, and retirement.
+
+The app is built with **TypeScript, React, and Vite** and runs entirely in the browser.
+It models an educational AArch64 subset with explicit timing assumptions; it is not
+a complete Arm emulator or a timing model of a specific Cortex processor.
+
+[Source code](https://github.com/gurmo06/ARM_Visualizer)
+
+## What Works Today
+
+| Area | Available now |
+| --- | --- |
+| Program input | Editable assembly and source-file upload (`.s`, `.asm`, `.txt`; up to 1 MiB). |
+| Machine view | X0-X30, XZR, SP, architectural PC, fetch PC, NZCV flags, changed-register highlighting, and stage indicators in the program listing. |
+| Pipeline view | IF, ID, EX, MEM, and WB activity; instruction focus; cycle timeline; interstage registers and valid bits. |
+| Instruction inspection | Register inputs, forwarding sources and producer IDs, ALU inputs/results, memory addresses/data, NZCV results, and branch decisions. |
+| Execution | Clock stepping, run/pause, reset, and adjustable playback from 1 to 16 simulated cycles per second. |
+| History | The latest 256 snapshots, with cycle navigation and per-cycle events. |
+| Data memory | 64 KiB of little-endian RAM, a 128-byte inspection window, address entry, paging, and SP tracking. |
+| Pipeline behavior | EX/MEM and MEM/WB forwarding, load-use stalls, bubbles, taken-branch flushes, and ordered halt/fault handling. |
+| Counters | Cycles, retired instructions, load-use stalls, flushed slots, and cycles per retired instruction (CPI). |
+
+The sequential CPU is retained as a reference engine for tests. The website uses the
+pipelined CPU.
+
+## Run Locally
+
+Use **Node.js 22.12 or newer** and npm.
 
 ```sh
-npm install
+git clone https://github.com/gurmo06/ARM_Visualizer.git
+cd ARM_Visualizer
+npm ci
 npm run dev
 ```
 
-Open the local URL printed by Vite. Cloudflare Pages uses the **React (Vite)** preset,
-`npm run build`, and the `dist` output directory.
+Open the URL printed by Vite, usually `http://localhost:5173`. No backend, database,
+or API keys are needed.
+
+To build and preview the production site:
 
 ```sh
-npm test
 npm run build
+npm run preview
+```
+
+## Using the Simulator
+
+The app starts with a loaded sample program.
+
+1. Use **Step** to advance one clock cycle, or **Run** to advance continuously.
+   **Pause** stops the clock; the speed slider controls playback, not modeled CPU frequency.
+2. Inspect registers, flags, PCs, and memory in **Machine**. Several instructions can be
+   active at once, so the listing shows the pipeline stage beside each active instruction.
+3. Open **Pipeline**, or click a populated pipeline stage or a fetched instruction in
+   the program listing. Select a stage or timeline row to focus that instruction instance.
+4. Inspect its stage-by-stage journey and data. Repeated loop iterations have different
+   instance IDs even when they originate from the same assembly address.
+5. Use the history slider, arrows, timeline cells, or journey steps to inspect recorded
+   cycles. Moving through history pauses playback.
+6. To change the program, edit the source and use **Load program**. Editing pauses execution
+   and disables Step/Run until the new source is loaded. Opening a source file loads it
+   automatically.
+
+**Reset and load program** reloads the editor's contents and clears registers, flags,
+RAM, pipeline state, and history. Icon controls have hover tooltips.
+
+### Live and History
+
+**Live returns the display to the most recent simulated cycle. It does not start the clock.**
+For example, `5 / 11` means you are inspecting cycle 5 while the latest state is cycle 11.
+Live returns to `11 / 11`; Run resumes execution.
+
+History is for inspection. Step and Run always continue from the latest machine state,
+not from the historical state on screen. The latest **256 snapshots** are retained;
+older snapshots and their instruction traces expire. The pipeline timeline displays
+up to 16 recorded cycles and 24 instruction instances at a time.
+
+## Sample Program
+
+This is the program loaded by default, with comments added:
+
+```asm
+MOVZ X0, #2
+MOVZ X1, #3
+ADD X2, X0, X1     // X2 = 5
+SUB SP, SP, #16    // Reserve a 16-byte stack slot
+STR X2, [SP]      // Store eight bytes at the new SP
+LDR X3, [SP]      // X3 = 5
+SUBS X4, X3, #5   // X4 = 0; update NZCV
+CBZ X4, #8        // If X4 is zero, branch forward eight bytes
+MOVZ X5, #99      // Skipped by the taken branch
+HLT
+```
+
+The sample retires **9 instructions in 16 cycles**. Its final state includes
+`X0 = 2`, `X1 = 3`, `X2 = X3 = 5`, `X4 = X5 = 0`, `SP = 0xFFE0`,
+and `NZCV = 0110`. The eight-byte value 5 remains stored at `0xFFE0`.
+
+Useful cycles to inspect:
+
+- **Cycle 5:** ADD is in EX, receiving X0 from MEM/WB and X1 from EX/MEM.
+- **Cycle 8:** SUBS waits in ID for the preceding LDR. The pipeline inserts one load-use bubble.
+- **Cycle 11:** CBZ resolves as taken in EX, flushing the younger MOVZ and HLT instances.
+- **Cycle 12:** HLT is fetched again at the branch target.
+- **Cycle 16:** HLT retires and the simulator stops.
+
+### Branch Offsets
+
+In this simulator's assembly input, branch offsets are **bytes relative to the branch
+instruction's own address**. They are not instruction counts or absolute addresses.
+
+In the sample, `CBZ X4, #8` at `0x001C` checks whether **X4 itself equals zero**.
+A zero branches to `0x001C + 8 = 0x0024`, the HLT instruction. Otherwise, execution
+continues at `0x0020`, the MOVZ instruction. CBZ and CBNZ do not test the PSTATE Z flag.
+
+On a taken branch, this pipeline clears both younger stage slots and refetches the target.
+That also discards an already-fetched instruction at the target address, as happens with
+HLT in the sample. Fetching HLT by itself does not halt the CPU.
+
+## Supported Assembly
+
+| Instructions | Supported forms |
+| --- | --- |
+| `ADD`, `SUB`, `ADDS`, `SUBS` | Register or immediate operands; optional shifted register operands; immediate shift `LSL #0` or `LSL #12`. |
+| `CMP` | Register or immediate comparison; updates flags without writing a destination. |
+| `AND`, `ORR`, `EOR` | Register operands, with an optional register shift. |
+| `MOVZ`, `MOVK` | Move-wide immediates, with an optional `LSL` halfword shift. |
+| `LSL`, `LSR`, `ASR` | Immediate shift amounts. |
+| `LDR`, `STR` | 32-bit or 64-bit transfers using `[base]` or `[base, #offset]`. |
+| `B`, `CBZ`, `CBNZ` | PC-relative byte offsets. |
+| `NOP`, `HLT` | No operation and simulator halt. |
+
+Use X registers for 64-bit operations and W registers for 32-bit operations. W reads use
+the low 32 bits; W writes clear the upper 32 bits of the corresponding X register.
+XZR/WZR read as zero and discard writes. SP is a separate register.
+
+The parser accepts one instruction per line, ignores blank lines, and supports `//`
+and `;` comments. Each instruction occupies a four-byte program address beginning at
+`0x0000`. End programs with HLT: fetching beyond the loaded program eventually faults
+unless that speculative fetch is flushed.
+
+Labels, assembler directives, machine-code input, logical immediates, and pre/post-indexed
+memory syntax are not supported. The parser does not yet enforce every A64 encoding
+restriction, including all immediate ranges and legal register combinations.
+
+## Memory and Stack
+
+Data RAM covers **65,536 byte addresses**, from `0x0000` through `0xFFFF` inclusive.
+`0x10000` is one byte past the end. Unwritten bytes read as zero.
+
+SP starts at `0xFFF0`, a 16-byte-aligned address near the top of RAM. Stack growth is
+explicit: subtract from SP to allocate space, access that space, then add to SP to
+release it. `STR X0, [SP]` alone stores eight bytes and does not change SP.
+
+The memory inspector shows eight rows of 16 bytes. Enter a hexadecimal address or use
+the page arrows to navigate; **Follow stack pointer** keeps the window near SP.
+Written bytes and the current SP byte are highlighted. The written-byte count records
+touched locations, not allocated stack or heap space.
+
+Loads and stores use little-endian byte order and require natural alignment in this model:
+four bytes for W transfers and eight bytes for X transfers. Memory accesses through SP
+also require SP to be 16-byte aligned. SP arithmetic itself does not trigger that check.
+Out-of-range and unaligned accesses produce faults.
+
+Instructions are held in a separate decoded program store. The RAM inspector displays
+data memory, not encoded instruction bytes.
+
+## Pipeline Model
+
+| Stage | Work performed | Output register |
+| --- | --- | --- |
+| IF | Fetch at fetch PC; advance sequentially by four bytes. | IF/ID |
+| ID | Read and route register, SP, and zero-register operands. | ID/EX |
+| EX | Forward operands; execute ALU/shift operations; calculate addresses and resolve branches. | EX/MEM |
+| MEM | Load or store data memory. | MEM/WB |
+| WB | Retire the instruction and commit register/SP and NZCV results. | Architectural state |
+
+A snapshot shows the work performed during its numbered cycle and the latch contents
+at the end of that cycle. The first instruction enters IF at cycle 1 and reaches WB
+at cycle 5. A straight-line, unstalled program of N instructions including HLT takes
+N + 4 cycles.
+
+- **Forwarding:** EX/MEM and MEM/WB supply values to EX; the closest older writer wins.
+  This includes arithmetic operands, memory bases, store data, SP, branch inputs, and
+  MOVK's previous destination value. WB writes are visible to ID in the same cycle.
+- **Load-use hazards:** an immediate consumer of an LDR result waits one cycle.
+  PC and IF/ID are held while a bubble enters ID/EX. Load-to-store dependencies also
+  stall; there is no late store-data bypass into MEM.
+- **Branches:** fetch proceeds sequentially until EX resolves the branch. A taken branch
+  flushes the two younger stage slots and fetches its target next cycle.
+- **Halt and faults:** HLT stops fetch in EX and halts on retirement. Faults travel with
+  their instructions and are reported at WB, allowing older work to finish while
+  suppressing younger side effects. Wrong-path instructions and fetch faults can be flushed.
+- **Memory timing:** each access takes one MEM cycle. Instruction fetch and data access
+  can happen in the same cycle; caches and variable latency are not modeled.
+
+**Architectural PC** tracks the next address after the last retired instruction, or
+the address of a retiring HLT/fault. **Fetch PC** identifies the next fetch address
+and can be ahead of architectural PC or on a path later discarded.
+
+The `PipelineCPU.run(n)` API executes up to n additional cycles and can resume after
+reaching that budget. The UI uses individual clock steps and runs until paused,
+halted, or faulted.
+
+## Development and Checks
+
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | Start Vite's development server. |
+| `npm run typecheck` | Check the TypeScript projects. |
+| `npm test` | Run simulator and React tests with Vitest. |
+| `npm run test:watch` | Run Vitest in watch mode. |
+| `npm run build` | Type-check and generate the static site in `dist/`. |
+| `npm run preview` | Serve the production build locally. |
+| `npm run test:e2e` | Run Playwright's desktop and mobile browser workflows. |
+
+Install Chromium before running the browser tests:
+
+```sh
 npx playwright install chromium
 npm run test:e2e
 ```
 
-The browser tests cover desktop and mobile layouts and save screenshots in `test-results/`.
-To use an installed Google Chrome instead of downloading Chromium:
+Alternatively, use an installed Google Chrome:
 
 ```sh
 PLAYWRIGHT_CHANNEL=chrome npm run test:e2e
 ```
 
-## Using the Simulator
+Playwright starts or reuses a local server at `http://127.0.0.1:5174`. Browser artifacts
+are written to `test-results/`. Tests cover register behavior, flags, memory, branches,
+forwarding, stalls, flushing, faults, snapshot isolation, and UI playback/history.
+Pipeline tests also compare final architectural state with the sequential CPU.
 
-1. Edit assembly or open a `.s`, `.asm`, or `.txt` file, then load the program.
-2. Step advances **one clock cycle**. Run advances continuously at the selected clock speed;
-   Pause preserves the current state. Reset reloads the editor and clears RAM and history.
-3. Open **Pipeline**, or select an executed instruction in the program listing or stage strip.
-4. Select a stage or timeline row to focus an instruction instance. The inspector shows its
-   journey, register inputs, forwarding sources and producer IDs, ALU inputs/result, NZCV,
-   memory address/data, and branch decision. Loop iterations have separate instance IDs.
-5. Use the cycle slider, arrows, timeline cells, or journey steps to inspect recorded cycles.
-   This pauses playback. **Live** returns to the newest state; Step/Run always continue from
-   that live state, without re-executing or modifying historical snapshots.
+Known test caveat: [the browser workflow](tests/e2e/pipeline.spec.ts) still contains
+heading assertions for the old name, "System Visualizer". Those assertions need to
+be updated to "ARM Visualizer" for the first workflow to pass with the current UI.
 
-History retains the latest **256 snapshots** to bound memory consumption. The timeline shows
-up to 16 cycles and 24 instruction instances. Older snapshots and expired instruction traces
-are discarded. The memory inspector shows eight 16-byte rows, with address entry, paging,
-and optional SP tracking. RAM spans `0x0000` through `0xFFFF`; initial SP is `0xFFF0`.
+### Project Layout
 
-## Pipeline Timing
+| Path | Responsibility |
+| --- | --- |
+| [`src/app/`](src/app/) | Machine view, pipeline inspector, memory inspector, and execution/history controls. |
+| [`src/top/pipeline_cpu.ts`](src/top/pipeline_cpu.ts) | Clock sequencing, memory access, retirement, and fault ordering. |
+| [`src/top/cpu.ts`](src/top/cpu.ts) | Sequential reference CPU. |
+| [`src/pipe/`](src/pipe/) | Pipeline latches, dependencies, forwarding, hazards, EX, and branch resolution. |
+| [`src/decode/`](src/decode/) | Assembly parsing and immediate handling. |
+| [`src/core/`](src/core/) | ALU, shifter, and register-related building blocks. |
+| [`src/mem/`](src/mem/) | Fetch and data-memory support. |
+| [`src/sim/`](src/sim/) | Shared instruction/state types, pipeline snapshots, and memory layout. |
+| [`tests/`](tests/) | Simulator and React tests, plus Playwright workflows in `tests/e2e/`. |
+| [`public/`](public/) | Static assets, including the CPU favicon. |
 
-| Stage | Work during the cycle | Output register |
-| --- | --- | --- |
-| IF | Fetch at the speculative fetch PC; advance by four bytes | IF/ID |
-| ID | Route register/SP/XZR operands and read the register file | ID/EX |
-| EX | Forward operands; run the shifter/ALU or calculate addresses/branches | EX/MEM |
-| MEM | Read or write data memory | MEM/WB |
-| WB | Retire; commit registers/SP and NZCV | Architectural state |
+TypeScript code uses four-space indentation, semicolons, and Allman-style braces.
+Keep simulator behavior independently testable from the UI.
 
-Snapshots describe work performed during the numbered cycle and latch contents at its end.
-The first instruction appears in IF at cycle 1, EX at cycle 3, and commits in WB at cycle 5.
-A straight-line program of N instructions, including HLT, takes N + 4 cycles without stalls.
-Architectural PC records the next address after the last retired instruction (or the HLT/fault
-address). Fetch PC is separate and can be ahead or on a path that will later be discarded.
+## Deploy to Cloudflare Pages
 
-- Stage inputs always come from the preceding clock edge. WB writes are visible to ID reads
-  in the same cycle. A bubble has a clear valid bit and cannot produce side effects.
-- EX/MEM and MEM/WB forwarding covers both arithmetic inputs, SP, memory bases, store data,
-  compare-branch inputs, and MOVK's old destination value. The newest writer wins.
-- W and X names alias the same physical register. W reads use the low 32 bits and W writes
-  clear the upper half. XZR/WZR never become forwarding producers or dependencies.
-- An immediate consumer of LDR stalls for one cycle: hold PC and IF/ID, inject an ID/EX
-  bubble. Loaded data is forwarded from MEM/WB on the following EX cycle. This model also
-  stalls load-to-store dependencies; it has no separate late MEM store-data bypass.
-- Sequential fetch assumes a branch is not taken. Taken branches resolve in EX, discard the
-  two younger IF/ID-stage slots, and fetch the target next cycle: a two-cycle penalty.
-- HLT stops fetch in EX and discards younger instructions; older instructions finish before
-  HLT retires. Wrong-path HLT and fetch faults can be flushed by an older branch.
-- Faults are carried with the instruction and reported on retirement. Older work completes;
-  younger register, flag, and memory changes are suppressed. An older MEM fault takes priority
-  over a younger EX branch. A malformed source program is rejected when loading.
-- `PipelineCPU.run(n)` executes up to n additional cycles, then pauses without inventing a CPU
-  fault. It can resume. The UI timer stops at HLT/fault and otherwise runs until paused.
+The production output is a static site. Use these build settings:
 
-## Hardware Scope
+| Setting | Value |
+| --- | --- |
+| Framework preset | React (Vite) |
+| Build command | `npm run build` |
+| Build output directory | `dist` |
+| Root directory | Repository root |
+| Node.js version | A version compatible with the local setup above. |
 
-This is an educational microarchitecture executing an AArch64 instruction subset, not a timing
-model of a particular Cortex core. Pipeline length and implementation are microarchitectural
-choices, as described in [Arm's architecture overview](https://www.arm.com/architecture/cpu).
+## Scope and Next Steps
 
-Assembly is decoded into the shared instruction model at load time; IF fetches that model
-from a separate program store. ID models control/operand routing. There is no encoded-word
-decoder, binary file support, instruction RAM aliasing, or self-modifying code yet. Supported
-opcodes are ADD, SUB, ADDS, SUBS, CMP, AND, ORR, EOR, MOVZ, MOVK, LSL, LSR, ASR, LDR, STR,
-B, CBZ, CBNZ, NOP, and HLT. Branches use PC-relative byte offsets, not labels. The existing
-assembly parser accepts only a subset of operand forms and does not validate all A64 encoding
-restrictions. Pre/post-indexed memory writeback is not supported by the pipeline.
+The initial project setup, shared instruction model, sequential CPU, instruction subset,
+focused tests, and five-stage pipeline are implemented. The main website workflows are
+also available, including source upload and instruction-level pipeline inspection.
 
-Memory accesses take one MEM cycle with independent instruction fetch and data access paths.
-Data RAM uses little-endian, naturally aligned 32/64-bit accesses. This is a strict alignment
-configuration; it does not model the memory attributes or controls that permit some unaligned
-accesses on real hardware. SP alignment checking is enabled when accessing memory through SP,
-not on every SP arithmetic write; see [Arm's stack alignment explanation](https://developer.arm.com/community/arm-community-blogs/b/architectures-and-processors-blog/posts/using-the-stack-in-aarch32-and-aarch64).
-HLT is a simulator stop convention rather than a modeled debug exception. Privilege levels,
-exception vectoring, MMU/TLB, caches, branch prediction, and variable memory latency remain
-future work.
+Areas still to implement or expand:
 
-## Code Layout
+- Encoded 32-bit instruction decoding, machine-code upload, labels, and stricter assembly validation.
+- More AArch64 instructions and addressing modes, including pre/post-indexed loads and stores.
+- Instruction/data caches, refill timing, and variable memory latency.
+- MMU/TLB behavior and branch prediction.
+- More detailed performance counters beyond the existing cycle, retirement, stall, flush, and CPI values.
 
-- `src/top/pipeline_cpu.ts`: clock sequencing, fetch, MEM, retirement, fault ordering.
-- `src/pipe/`: latches, operand dependencies, forwarding, hazards, EX, and branch resolution.
-- `src/sim/`: shared architectural and pipeline snapshot types and memory layout.
-- `src/core/`, `src/mem/`, `src/decode/`: ALU, shifts, memory, and assembly instruction model.
-- `src/top/cpu.ts`: sequential reference engine used by differential tests.
-- `src/app/`: machine view, pipeline inspector, history controls, and RAM inspector.
-- `tests/`: simulator and React tests; `tests/e2e/`: browser workflows.
+There is no privilege-level model, exception vectoring, operating-system environment,
+or self-modifying code support. HLT is a simulator stop convention, not a modeled
+architectural debug exception. The five-stage organization, single-cycle memory, and
+alignment policy are explicit simulator choices.
 
-## Conventions
+## License
 
-Helpful Terminology:
-    Combinational - Immediate output change upon input changes
-    Sequential - Has states; updates output on clock edge
-
-Coding Hygiene:
-    Brace style: Allman (opening brace on its own line).
-    Indent: 4 spaces. No tabs.
-    Max line length: ~100 chars (wrap thoughtfully).
-    Semicolons: required.
-    Trailing whitespace: none.
-    One blank line between top-level declarations; avoid vertical noise.
+See [LICENSE](LICENSE) for the GNU General Public License, version 3.
