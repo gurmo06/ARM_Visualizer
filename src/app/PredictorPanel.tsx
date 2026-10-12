@@ -8,13 +8,14 @@ type PredictorState = Pick<PipelineSnapshot, "cycle" | "predictor">;
 export function PredictorPanel({ snapshot, previous }: { snapshot: PredictorState; previous?: PredictorState })
 {
     const predictor = snapshot.predictor;
-    const enabled = predictor.mode !== "not-taken";
+    const enabled = predictor.mode !== "not-taken" && predictor.mode !== "taken-no-btb";
     const stateLabels = predictor.mode === "one-bit" || predictor.mode === "two-bit" ? predictionStateLabels[predictor.mode] : undefined;
     const previousEntries = previous?.cycle === snapshot.cycle - 1 && previous.predictor.mode === predictor.mode
         ? previous.predictor.entries : undefined;
     return <section id="branch-predictor" className="predictor-section" aria-label="Branch predictor">
         <div className="section-heading"><h2><GitBranch size={18} /> Branch predictor</h2>
-            <span className="muted">End of cycle {snapshot.cycle} / {enabled ? `${predictor.entries.length} / ${predictor.capacity} BTB entries` : "Always not taken"}</span>
+            <span className="muted">End of cycle {snapshot.cycle} / {enabled ? `${predictor.entries.length} / ${predictor.capacity} BTB entries`
+                : predictor.mode === "taken-no-btb" ? "Always taken in ID / BTB disabled" : "Always not taken"}</span>
         </div>
         <div className="pipeline-metrics predictor-metrics">
             <span>Resolved branches <b>{predictor.resolved}</b></span>

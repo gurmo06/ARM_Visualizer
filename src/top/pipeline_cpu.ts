@@ -137,10 +137,11 @@ export class PipelineCPU
 
         if (ex?.branchTaken !== undefined && !ex.fault && !mem?.fault)
         {
+            const prediction = ex.decodePrediction ?? ex.prediction!;
             ex.branchResolution = this.predictor.resolve(ex.address, ex.branchTarget!,
-                ex.instruction!.opcode !== "B", ex.branchTaken, ex.prediction!);
+                ex.instruction!.opcode !== "B", ex.branchTaken, prediction);
             this.record(ex.branchResolution.mispredicted ? "mispredict" : "prediction",
-                `Predicted next PC 0x${ex.prediction!.nextPc.toString(16)}; actual 0x${ex.branchResolution.nextPc.toString(16)}.`, ex);
+                `Predicted next PC 0x${prediction.nextPc.toString(16)}; actual 0x${ex.branchResolution.nextPc.toString(16)}.`, ex);
         }
 
         // Older faults take priority over younger branches and halt instructions.
@@ -171,6 +172,24 @@ export class PipelineCPU
             this.latches["IF/ID"] = latch(id);
             this.latches["ID/EX"] = latch();
             this.record("stall", "Load-use dependency: hold PC and IF/ID; insert an ID/EX bubble.", id);
+        }
+        else if (id?.instruction?.branch && !id.fault)
+        {
+            // ID redirects only when it advances; older EX/MEM recovery always wins.
+            id.decodePrediction = this.predictor.predictDecoded(id.address, id.instruction.branch.target);
+            if (id.decodePrediction)
+            {
+                const nextPc = id.decodePrediction.nextPc;
+                this.stages[1].note = `Predict taken in ID: 0x${nextPc.toString(16)}`;
+                this.record("prediction", `ID predicts taken without BTB: next PC 0x${nextPc.toString(16)}.`, id);
+                if (nextPc !== id.prediction!.nextPc)
+                {
+                    this.squash(this.stages.slice(0, 1), "Taken prediction in ID (no BTB)");
+                    this.latches["IF/ID"] = latch();
+                    this.fetchPc = nextPc;
+                    this.fetchStopped = false;
+                }
+            }
         }
         return this.snapshot();
     }

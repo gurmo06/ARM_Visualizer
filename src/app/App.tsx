@@ -158,6 +158,7 @@ export function App()
                     <option value="two-bit">2-bit + BTB</option>
                     <option value="one-bit">1-bit + BTB</option>
                     <option value="taken">Always taken + BTB</option>
+                    <option value="taken-no-btb">Always taken (no BTB)</option>
                     <option value="not-taken">Always not taken</option>
                 </select>
                 <a className="icon-button small predictor-link" href="#branch-predictor" title="Inspect predictor state" aria-label="Inspect predictor state"><Binary size={16} /></a>

@@ -25,7 +25,7 @@ a complete Arm emulator or a timing model of a specific Cortex processor.
 | History | The latest 256 snapshots, with cycle navigation and per-cycle events. |
 | Data memory | 64 KiB of little-endian RAM, a 128-byte inspection window, address entry, paging, and SP tracking. |
 | Pipeline behavior | EX/MEM and MEM/WB forwarding, load-use stalls, bubbles, misprediction recovery, and ordered halt/fault handling. |
-| Branch prediction | Two-bit, one-bit, always-taken, and always-not-taken modes; 64-entry tagged branch-target buffer (BTB) and a live/historical table. |
+| Branch prediction | Two-bit, one-bit, always-taken with/without a BTB, and always-not-taken modes; 64-entry tagged branch-target buffer (BTB) and a live/historical table. |
 | Counters | Cycles, retired instructions, load-use stalls, flushed slots, CPI, resolved branches, mispredictions, next-PC accuracy, and BTB hits/misses. |
 
 The sequential CPU is retained as a reference engine for tests. The website uses the
@@ -72,8 +72,8 @@ The app starts with a loaded sample program.
 
 **Reset and load program** reloads the editor's contents and clears registers, flags,
 RAM, pipeline state, predictor learning/counters, and history. Icon controls have hover tooltips.
-The **Branch prediction** selector offers **2-bit + BTB** (default), **1-bit + BTB**,
-**Always taken + BTB**, and **Always not taken**. Changing it resets the loaded program; subsequent loads and resets
+The **Branch prediction** selector offers **2-bit + BTB**, **1-bit + BTB**,
+**Always taken + BTB**, **Always taken (no BTB)** (default), and **Always not taken**. Changing it resets the loaded program; subsequent loads and resets
 preserve the selected mode. Load edited source before changing the mode.
 
 ### Live and History
@@ -104,7 +104,7 @@ MOVZ X5, #99      // Skipped by the taken branch
 HLT
 ```
 
-The sample retires **9 instructions in 16 cycles**. Its final state includes
+With the default no-BTB predictor, the sample retires **9 instructions in 15 cycles**. Its final state includes
 `X0 = 2`, `X1 = 3`, `X2 = X3 = 5`, `X4 = X5 = 0`, `SP = 0xFFE0`,
 and `NZCV = 0110`. The eight-byte value 5 remains stored at `0xFFE0`.
 
@@ -112,9 +112,9 @@ Useful cycles to inspect:
 
 - **Cycle 5:** ADD is in EX, receiving X0 from MEM/WB and X1 from EX/MEM.
 - **Cycle 8:** SUBS waits in ID for the preceding LDR. The pipeline inserts one load-use bubble.
-- **Cycle 11:** CBZ resolves as taken in EX after a cold prediction of not taken, flushing the younger MOVZ and HLT instances.
-- **Cycle 12:** HLT is fetched again at the branch target.
-- **Cycle 16:** HLT retires and the simulator stops.
+- **Cycle 10:** CBZ predicts taken in ID, flushing the sequential MOVZ in IF and redirecting to HLT.
+- **Cycle 11:** CBZ resolves as taken in EX while HLT is fetched at the target. No misprediction recovery is needed.
+- **Cycle 15:** HLT retires and the simulator stops.
 
 ### Branch Offsets
 
@@ -127,8 +127,9 @@ continues at `0x0020`, the MOVZ instruction. CBZ and CBNZ do not test the PSTATE
 
 On a misprediction, this pipeline clears both younger stage slots and fetches the correct
 next address on the following cycle. That also discards an already-fetched instruction at
-the target address, as happens with HLT in the sample. A correctly predicted taken branch
-does not flush. Fetching HLT by itself does not halt the CPU.
+the target address, as happens with HLT in the sample when using a cold BTB mode. A correctly predicted taken branch
+in a BTB mode does not flush. Without a BTB, the ID redirect discards the sequential IF
+instruction even when the taken prediction is correct. Fetching HLT by itself does not halt the CPU.
 
 ## Supported Assembly
 
@@ -199,10 +200,11 @@ N + 4 cycles.
 - **Load-use hazards:** an immediate consumer of an LDR result waits one cycle.
   PC and IF/ID are held while a bubble enters ID/EX. Load-to-store dependencies also
   stall; there is no late store-data bypass into MEM.
-- **Branches:** IF speculates using the BTB and direction counter; EX compares the saved
+- **Branches:** BTB modes speculate in IF; always-taken without a BTB redirects in ID.
+  EX compares the saved
   predicted next PC with the actual next PC. A mismatch flushes both younger slots and
   redirects fetch next cycle, including recovery to fallthrough when a taken prediction
-  was wrong. Correct predictions keep the pipeline moving.
+  was wrong. Correct IF predictions keep the pipeline moving without a redirect bubble.
 - **Halt and faults:** HLT stops fetch in EX and halts on retirement. Faults travel with
   their instructions and are reported at WB, allowing older work to finish while
   suppressing younger side effects. Wrong-path instructions and fetch faults can be flushed.
@@ -219,15 +221,16 @@ halted, or faulted.
 
 ### Branch Predictor
 
-All modes except always-not-taken use a **direct-mapped, full-PC-tagged, 64-entry BTB**. Its index is
+The two-bit, one-bit, and always-taken + BTB modes use a **direct-mapped, full-PC-tagged, 64-entry BTB**. Its index is
 `(PC >> 2) & (entries - 1)`. A tag mismatch is a miss, not a prediction from another
 branch that happens to share the index. Resolved branches replace colliding entries.
 
-| Mode | Conditional direction state | Prediction on a BTB hit |
+| Mode | Conditional direction state | Prediction behavior |
 | --- | --- | --- |
-| 2-bit + BTB (default) | Saturating counter, 0-3 | Taken for 2/3; not taken for 0/1. |
-| 1-bit + BTB | Last resolved outcome, 0/1 | Repeat that outcome: 1 taken, 0 not taken. |
-| Always taken + BTB | None | Taken, regardless of previous outcomes. |
+| 2-bit + BTB | Saturating counter, 0-3 | On a BTB hit: taken for 2/3; not taken for 0/1. |
+| 1-bit + BTB | Last resolved outcome, 0/1 | On a BTB hit: repeat that outcome, 1 taken / 0 not taken. |
+| Always taken + BTB | None | On a BTB hit: taken, regardless of previous outcomes. |
+| Always taken (no BTB) (default) | None; BTB disabled | Sequential IF; predict taken using the decoded target in ID. |
 | Always not taken | None; BTB disabled | Always sequential `PC + 4`. |
 
 - IF looks up the PC only. A cold miss predicts sequential `PC + 4`; it does not peek
@@ -241,7 +244,7 @@ branch that happens to share the index. Resolved branches replace colliding entr
 - In one-bit mode, each resolved conditional branch replaces its history bit with the
   actual outcome. One reversal immediately flips the next prediction; there are no
   weak/strong states. A loop exit changes it to not taken, so loop re-entry may miss again.
-- Always-taken mode learns targets but stores no direction history. Even a branch that
+- Always-taken + BTB mode learns targets but stores no direction history. Even a branch that
   has never been taken predicts taken once its BTB entry is populated.
 - In BTB-enabled modes, known unconditional `B` instructions predict taken on a hit,
   without a direction counter. They still incur a cold miss on their first execution.
@@ -256,6 +259,15 @@ branch that happens to share the index. Resolved branches replace colliding entr
   needs no flush when the predicted and actual directions differ but the address agrees.
 - Always-not-taken mode disables BTB learning and predicts `PC + 4` on every fetch.
   It still records resolved branches and mispredictions for comparison.
+- **Always taken (no BTB)** fetches sequentially until a branch advances through ID.
+  ID uses the decoded direct-branch target, discards the sequential IF instruction,
+  and redirects fetch for the following cycle. A target equal to `PC + 4` needs no
+  redirect. Load-use stalls defer the ID prediction; older faults, HLT, and EX recovery
+  take priority. EX still checks the actual condition using forwarded operands and
+  recovers to fallthrough if necessary. This mode never trains or looks up a BTB.
+  Its accuracy counters compare the **ID prediction** with EX, not the initial sequential
+  fetch. A correct ID prediction still incurs a one-cycle redirect delay, unlike a
+  correct BTB prediction in IF. The ID redirect counts as a flush, not a misprediction.
 
 The **Branch predictor** panel is available in both **Machine** and **Pipeline**. The
 binary icon beside the prediction selector jumps directly to it. Each trained branch
@@ -268,6 +280,9 @@ The table shows state **at the end of the selected cycle**, including when navig
 history. In **Pipeline**, selecting a branch instance also shows **Bits (IF)**: the
 original state observed by that particular fetch, which can differ from the current
 table after training. A cold fetch displays `--`, not a fabricated zero-valued counter.
+In no-BTB taken mode, the inspector preserves **Prediction (IF)** and **Next PC (IF)**
+and adds **Prediction (ID)** and **Next PC (ID)**, with **BTB lookup: Disabled**.
+Before ID advances, those ID fields show **Pending ID**, including in cycle history.
 
 Try this loop to see the predictor warm up:
 
@@ -278,15 +293,17 @@ CBNZ X0, #-4
 HLT
 ```
 
-All four modes retire 22 instructions and finish with X0 = 0. Each BTB-enabled mode takes
-**30 cycles with 2 mispredictions** (first taken branch and loop exit), versus
-**44 cycles with 9 mispredictions** for always-not-taken. These are modeled cycle counts,
+All five modes retire 22 instructions and finish with X0 = 0. Each BTB-enabled mode takes
+**30 cycles with 2 mispredictions** (first taken branch and loop exit).
+Always-taken without a BTB takes **37 cycles with 1 misprediction** (loop exit), including
+the recurring ID redirect delays; always-not-taken takes **44 cycles with 9 mispredictions**.
+These are modeled cycle counts,
 not a promise of faster JavaScript execution. Small or irregular programs can see no
 benefit, or perform worse than static prediction.
 
 The simulator API also accepts `new PipelineCPU(source, initialRegisters, { mode:
-"two-bit", entries: 64 })`. Mode values are `"two-bit"`, `"one-bit"`, `"taken"`, and
-`"not-taken"`. Capacity must be a power of two from 1 to 4096. This is a
+"two-bit", entries: 64 })`. Mode values are `"two-bit"`, `"one-bit"`, `"taken"`, `"taken-no-btb"`, and
+`"not-taken"`. Omitting the mode defaults to `"taken-no-btb"`. Capacity must be a power of two from 1 to 4096. This is a
 small educational hardware model, not a reproduction of a modern Cortex predictor.
 Global-history prediction, indirect branches, return prediction, and context tagging
 are not implemented.
@@ -320,7 +337,7 @@ Playwright starts or reuses a local server at `http://127.0.0.1:5174`. Browser a
 are written to `test-results/`. Tests cover register behavior, flags, memory, branches,
 forwarding, stalls, flushing, faults, snapshot isolation, predictor training/collisions,
 speculative recovery, and UI playback/history. Branch-heavy programs are checked against
-the sequential CPU with multiple BTB capacities and all four prediction modes. Browser tests
+the sequential CPU with multiple BTB capacities and all five prediction modes. Browser tests
 also compare loop execution and inspect predictor history on desktop and mobile.
 
 ### Project Layout

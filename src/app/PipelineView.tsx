@@ -85,7 +85,11 @@ function TokenDetails({ token }: { token: PipelineToken })
                     {token.prediction && <>
                         <DataRow label="Prediction (IF)" value={token.prediction.taken ? "Taken" : "Not taken"} />
                         <DataRow label="Next PC (IF)" value={formatHex(token.prediction.nextPc, 4)} />
-                        <DataRow label="BTB lookup" value={token.prediction.mode === "not-taken" ? "Disabled" : `${token.prediction.btbHit ? "Hit" : "Miss"} / index ${token.prediction.index}`} />
+                        {token.prediction.mode === "taken-no-btb" && <>
+                            <DataRow label="Prediction (ID)" value={token.decodePrediction ? "Taken" : "Pending ID"} />
+                            <DataRow label="Next PC (ID)" value={token.decodePrediction ? formatHex(token.decodePrediction.nextPc, 4) : "Pending ID"} />
+                        </>}
+                        <DataRow label="BTB lookup" value={token.prediction.mode === "not-taken" || token.prediction.mode === "taken-no-btb" ? "Disabled" : `${token.prediction.btbHit ? "Hit" : "Miss"} / index ${token.prediction.index}`} />
                         <DataRow label={token.prediction.mode === "one-bit" ? "History bit (IF)" : token.prediction.mode === "two-bit" ? "Counter (IF)" : "Direction policy"}
                             value={formatPredictionState(token.prediction.mode, token.prediction.counter)} />
                         {(token.prediction.mode === "one-bit" || token.prediction.mode === "two-bit") &&

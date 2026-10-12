@@ -15,9 +15,9 @@ export class BranchPredictor
     private btbHits = 0;
     private btbMisses = 0;
 
-    constructor({ mode = "two-bit", entries = 64 }: PredictorOptions = {})
+    constructor({ mode = "taken-no-btb", entries = 64 }: PredictorOptions = {})
     {
-        if (mode !== "two-bit" && mode !== "one-bit" && mode !== "taken" && mode !== "not-taken")
+        if (mode !== "two-bit" && mode !== "one-bit" && mode !== "taken" && mode !== "taken-no-btb" && mode !== "not-taken")
         {
             throw new Error("Invalid prediction mode.");
         }
@@ -39,7 +39,7 @@ export class BranchPredictor
     public predict(pc: Word): BranchPrediction
     {
         const index = this.index(pc);
-        const entry = this.mode !== "not-taken" ? this.table[index] : undefined;
+        const entry = this.usesBtb ? this.table[index] : undefined;
         const hit = entry?.pc === pc;
         const taken = hit && (!entry.conditional || this.mode === "taken"
             || (entry.counter ?? 0) >= (this.mode === "one-bit" ? 1 : 2));
@@ -48,6 +48,15 @@ export class BranchPredictor
             nextPc: taken ? entry.target : applyWidth(pc + 4n, 64),
             target: hit ? entry.target : undefined,
             counter: hit && entry.conditional ? entry.counter : undefined
+        };
+    }
+
+    public predictDecoded(pc: Word, target: Word): BranchPrediction | undefined
+    {
+        if (this.mode !== "taken-no-btb") return undefined;
+        return {
+            mode: this.mode, index: this.index(pc), btbHit: false, taken: true,
+            target: applyWidth(target, 64), nextPc: applyWidth(target, 64)
         };
     }
 
@@ -60,7 +69,7 @@ export class BranchPredictor
         this.resolved += 1;
         if (!mispredicted) this.correct += 1;
 
-        if (this.mode !== "not-taken")
+        if (this.usesBtb)
         {
             if (prediction.btbHit) this.btbHits += 1;
             else this.btbMisses += 1;
@@ -94,5 +103,10 @@ export class BranchPredictor
     private index(pc: Word): number
     {
         return Number((pc >> 2n) & BigInt(this.capacity - 1));
+    }
+
+    private get usesBtb(): boolean
+    {
+        return this.mode !== "not-taken" && this.mode !== "taken-no-btb";
     }
 }

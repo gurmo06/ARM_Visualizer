@@ -1,6 +1,6 @@
 import type { Word } from "./types";
 
-export type PredictionMode = "two-bit" | "one-bit" | "taken" | "not-taken";
+export type PredictionMode = "two-bit" | "one-bit" | "taken" | "taken-no-btb" | "not-taken";
 export type DirectionCounter = 0 | 1 | 2 | 3;
 
 export interface PredictorOptions

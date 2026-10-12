@@ -46,7 +46,7 @@ describe("branch prediction policies", () =>
 
     it("starts cold, indexes instruction addresses, and trains saturating counters", () =>
     {
-        const predictor = new BranchPredictor();
+        const predictor = new BranchPredictor({ mode: "two-bit" });
         expect(predictor.predict(12n)).toMatchObject({ index: 3, btbHit: false, taken: false, nextPc: 16n });
         const outcomes = [false, false, true, true, true, true, false, false, false, false];
         const counters = [0, 0, 1, 2, 3, 3, 2, 1, 0, 0];
@@ -63,7 +63,7 @@ describe("branch prediction policies", () =>
 
     it("allocates weak-not-taken then trains, retaining taken bias after a single reversal", () =>
     {
-        const predictor = new BranchPredictor();
+        const predictor = new BranchPredictor({ mode: "two-bit" });
         for (const taken of [true, true, false]) predictor.resolve(0n, 32n, true, taken, predictor.predict(0n));
         expect(predictor.predict(0n)).toMatchObject({ taken: true, counter: 2 });
         predictor.resolve(0n, 32n, true, false, predictor.predict(0n));
@@ -96,7 +96,7 @@ describe("branch prediction policies", () =>
 
     it("compares next PCs, including target changes and fallthrough-equivalent branches", () =>
     {
-        const predictor = new BranchPredictor();
+        const predictor = new BranchPredictor({ mode: "two-bit" });
         expect(predictor.resolve(0n, 4n, true, true, predictor.predict(0n)).mispredicted).toBe(false);
         expect(predictor.resolve(0n, 4n, true, false, predictor.predict(0n)).mispredicted).toBe(false);
         predictor.resolve(8n, 16n, false, true, predictor.predict(8n));

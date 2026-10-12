@@ -75,7 +75,7 @@ describe("speculative branch execution", () =>
 
     it("queries the pre-edge table in IF and retains the at-fetch counter", () =>
     {
-        const history = trace("CBNZ X0, #0", {}, [1n], 9);
+        const history = trace("CBNZ X0, #0", { mode: "two-bit" }, [1n], 9);
         expect(history[6].pipeline[0].token!.prediction!.counter).toBe(2);
         expect(history[6].predictor.entries[0].counter).toBe(3);
         expect(history[8].pipeline[2].token!.prediction!.counter).toBe(2);
@@ -139,7 +139,7 @@ describe("speculative branch execution", () =>
 
     it.each(["B #2", "B #100"])("preserves real target fetch faults: %s", (source) =>
     {
-        const state = new PipelineCPU(source).run();
+        const state = new PipelineCPU(source, [], { mode: "two-bit" }).run();
         expect(state.fault).toBeDefined();
         expect(state.retired).toBe(1);
         expect(state.predictor).toMatchObject({ resolved: 1, mispredictions: 1 });
@@ -170,7 +170,7 @@ describe("speculative branch execution", () =>
         {
             const source = `MOVZ X0, #${seed + 2}\nMOVZ X1, #${seed}\nAND X2, X0, X1\nCBZ X2, #12\nADD X3, X3, #${seed * 3}\nB #8\nEOR X3, X3, X1\nSTR X3, [SP]\nLDR X4, [SP]\nSUBS X0, X0, #1\nCBNZ X0, #-32\nHLT`;
             const baseline = matchesReference(source, { mode: "not-taken", entries });
-            for (const mode of btbModes)
+            for (const mode of [...btbModes, "taken-no-btb"] as const)
             {
                 const predicted = matchesReference(source, { mode, entries });
                 expect(predicted.retired).toBe(baseline.retired);

@@ -31,6 +31,7 @@ export interface PipelineToken
     branchTaken?: boolean;
     branchTarget?: Word;
     prediction?: BranchPrediction;
+    decodePrediction?: BranchPrediction;
     branchResolution?: BranchResolution;
     fault?: string;
 }

@@ -19,6 +19,7 @@ export function formatPredictionBits(mode: PredictionMode, counter?: DirectionCo
 export function formatPredictionState(mode: PredictionMode, counter?: DirectionCounter): string
 {
     if (mode === "taken") return "Always taken";
+    if (mode === "taken-no-btb") return "Always taken in ID";
     if (mode === "not-taken") return "Always not taken";
     return counter === undefined ? "--" : `${counter} / ${predictionStateLabels[mode][counter]}`;
 }

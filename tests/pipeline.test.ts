@@ -120,9 +120,11 @@ describe("five-stage pipeline", () =>
         expect(history.at(-1)!.pstate).toEqual({ negative: true, zero: false, carry: false, overflow: false });
     });
 
-    it("flushes both younger slots on a taken branch and fetches the target next cycle", () =>
+    it("flushes both younger slots on a cold BTB miss and fetches the target next cycle", () =>
     {
-        const history = trace("B #12\nSTR X0, [SP]\nSUBS X0, X0, #1\nHLT", [42n]);
+        const cpu = new PipelineCPU("B #12\nSTR X0, [SP]\nSUBS X0, X0, #1\nHLT", [42n], { mode: "two-bit" });
+        const history = [cpu.snapshot()];
+        while (!history.at(-1)!.halted) history.push(cpu.step());
         expect(history[3].pipeline.slice(0, 2).every((entry) => entry.flushed && !entry.valid)).toBe(true);
         expect(history[3].fetchPc).toBe(12n);
         expect(history[4].pipeline[0].token?.address).toBe(12n);
@@ -134,7 +136,7 @@ describe("five-stage pipeline", () =>
 
     it("continues sequential fetch after a not-taken branch", () =>
     {
-        const state = final("MOVZ X0, #1\nCBZ X0, #8\nMOVZ X1, #5\nHLT");
+        const state = new PipelineCPU("MOVZ X0, #1\nCBZ X0, #8\nMOVZ X1, #5\nHLT", [], { mode: "not-taken" }).run();
         expect(state.registers[1]).toBe(5n);
         expect(state.cycle).toBe(8);
     });

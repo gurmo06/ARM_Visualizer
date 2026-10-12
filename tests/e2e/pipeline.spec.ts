@@ -1,5 +1,52 @@
 import { expect, test } from "@playwright/test";
 
+test("inspect always-taken ID redirection without a BTB", async ({ page }, testInfo) =>
+{
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    await page.goto("/");
+    await page.getByRole("textbox", { name: "Assembly program" }).fill("MOVZ X0, #10\nSUBS X0, X0, #1\nCBNZ X0, #-4\nHLT");
+    await page.getByRole("button", { name: "Load program", exact: true }).click();
+    const selector = page.getByRole("combobox", { name: "Branch prediction" });
+    await expect(selector).toHaveValue("taken-no-btb");
+    const step = page.getByRole("button", { name: "Step one clock cycle" });
+    for (let i = 0; i < 4; i += 1) await step.click();
+    await page.getByRole("button", { name: "ID: CBNZ X0, #-4", exact: true }).click();
+    const inspector = page.getByRole("region", { name: "Instruction inspector" });
+    const value = (label: string) => inspector.locator(".data-row").filter({ hasText: label }).locator("code");
+    await expect(value("Prediction (IF)")).toHaveText("Not taken");
+    await expect(value("Prediction (ID)")).toHaveText("Taken");
+    await expect(value("Next PC (ID)")).toHaveText("0x0004");
+    await expect(value("BTB lookup")).toHaveText("Disabled");
+    await expect(page.getByRole("table", { name: "Branch target buffer" })).toHaveCount(0);
+    const flushed = page.getByRole("button", { name: "IF: HLT", exact: true });
+    await expect(flushed).toHaveAttribute("title", "Taken prediction in ID (no BTB)");
+    await expect(flushed).toContainText("FLUSH");
+    await inspector.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath("no-btb-inspector.jpg"), quality: 75, fullPage: true });
+    await page.getByRole("button", { name: "Inspect cycle 3, IF" }).click();
+    await expect(value("Prediction (ID)")).toHaveText("Pending ID");
+    await page.getByRole("button", { name: "Live", exact: true }).click();
+    await step.click();
+    await expect(value("Prediction result")).toHaveText("Correct");
+    await page.getByRole("slider", { name: "Clock speed" }).press("End");
+    await page.getByRole("button", { name: "Run", exact: true }).click();
+    await expect(page.getByText("Halted", { exact: true })).toBeVisible();
+    await expect(page.getByRole("slider", { name: "Recorded cycle" })).toHaveValue("37");
+    const predictor = page.getByRole("region", { name: "Branch predictor", exact: true });
+    await expect(predictor.locator(".predictor-metrics")).toContainText("Mispredictions 1");
+    await expect(predictor.getByText("90.0%")).toBeVisible();
+    await page.getByRole("link", { name: "Inspect predictor state" }).click();
+    await page.screenshot({ path: testInfo.outputPath("no-btb-predictor.jpg"), quality: 75 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.getByRole("button", { name: "Reset and load program" }).click();
+    await expect(selector).toHaveValue("taken-no-btb");
+    await expect(page.getByRole("slider", { name: "Recorded cycle" })).toHaveValue("0");
+    await selector.selectOption("taken");
+    await expect(predictor.getByText("No trained entries")).toBeVisible();
+    expect(errors).toEqual([]);
+});
+
 test("inspect forwarding, stalls, retirement, history, and memory", async ({ page }, testInfo) =>
 {
     const errors: string[] = [];
@@ -34,6 +81,7 @@ test("inspect forwarding, stalls, retirement, history, and memory", async ({ pag
     await page.getByRole("button", { name: "Run", exact: true }).click();
     await expect(page.getByText("Halted", { exact: true })).toBeVisible();
     await expect(inspector.getByText("#7 / Retired")).toBeVisible();
+    await expect(page.getByRole("slider", { name: "Recorded cycle" })).toHaveValue("15");
     await page.getByRole("button", { name: "Machine", exact: true }).click();
     await expect(page.locator(".register-grid > div").filter({ has: page.getByText("X3", { exact: true }) })).toContainText("0x0000000000000005");
     await expect(page.locator(".memory-table td.written-byte").first()).toHaveText("05");
@@ -47,6 +95,7 @@ test("inspect learned predictions and compare loop execution with the static bas
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto("/");
+    await page.getByRole("combobox", { name: "Branch prediction" }).selectOption("two-bit");
     await page.getByRole("textbox", { name: "Assembly program" }).fill("MOVZ X0, #10\nSUBS X0, X0, #1\nCBNZ X0, #-4\nHLT");
     await page.getByRole("button", { name: "Load program", exact: true }).click();
     const step = page.getByRole("button", { name: "Step one clock cycle" });
@@ -98,7 +147,7 @@ for (const { mode, trained, exited } of [
         await page.getByRole("textbox", { name: "Assembly program" }).fill("MOVZ X0, #10\nSUBS X0, X0, #1\nCBNZ X0, #-4\nHLT");
         await page.getByRole("button", { name: "Load program", exact: true }).click();
         const selector = page.getByRole("combobox", { name: "Branch prediction" });
-        await expect(selector.locator("option")).toHaveCount(4);
+        await expect(selector.locator("option")).toHaveCount(5);
         await selector.selectOption(mode);
         const step = page.getByRole("button", { name: "Step one clock cycle" });
         for (let i = 0; i < 9; i += 1) await step.click();

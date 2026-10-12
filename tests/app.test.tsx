@@ -21,9 +21,37 @@ function load(source: string): void
 
 describe("pipeline workspace", () =>
 {
+    it("shows separate IF and ID decisions without a BTB, including cycle history", () =>
+    {
+        render(<App />);
+        load("B #8\nMOVZ X0, #99\nHLT");
+        const selector = screen.getByRole("combobox", { name: "Branch prediction" });
+        expect(selector).toHaveValue("taken-no-btb");
+        expect(screen.queryByRole("table", { name: "Branch target buffer" })).not.toBeInTheDocument();
+        step(2);
+        fireEvent.click(screen.getByRole("button", { name: "ID: B #8" }));
+        const inspector = screen.getByRole("region", { name: "Instruction inspector" });
+        const value = (label: string) => within(inspector).getByText(label).parentElement?.querySelector("code");
+        expect(value("Prediction (IF)")).toHaveTextContent(/^Not taken$/);
+        expect(value("Prediction (ID)")).toHaveTextContent(/^Taken$/);
+        expect(value("Next PC (ID)")).toHaveTextContent(/^0x0008$/);
+        expect(value("BTB lookup")).toHaveTextContent(/^Disabled$/);
+        fireEvent.click(screen.getByRole("button", { name: "Inspect cycle 1, IF" }));
+        expect(value("Prediction (ID)")).toHaveTextContent(/^Pending ID$/);
+        fireEvent.click(screen.getByRole("button", { name: "Live" }));
+        step();
+        expect(value("Prediction result")).toHaveTextContent(/^Correct$/);
+        step(4);
+        expect(screen.getByText("Halted", { exact: true })).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Reset and load program" }));
+        expect(selector).toHaveValue("taken-no-btb");
+        expect(screen.getByRole("slider", { name: "Recorded cycle" })).toHaveValue("0");
+    });
+
     it("exposes stored bits in Machine and preserves at-fetch bits through training and history", () =>
     {
         render(<App />);
+        fireEvent.change(screen.getByRole("combobox", { name: "Branch prediction" }), { target: { value: "two-bit" } });
         load("MOVZ X0, #10\nSUBS X0, X0, #1\nCBNZ X0, #-4\nHLT");
         expect(screen.getByRole("link", { name: "Inspect predictor state" })).toHaveAttribute("href", "#branch-predictor");
         expect(screen.getByRole("region", { name: "Branch predictor" })).toHaveAttribute("id", "branch-predictor");
@@ -57,7 +85,7 @@ describe("pipeline workspace", () =>
         render(<App />);
         load("MOVZ X0, #10\nSUBS X0, X0, #1\nCBNZ X0, #-4\nHLT");
         const selector = screen.getByRole("combobox", { name: "Branch prediction" });
-        expect(within(selector).getAllByRole("option")).toHaveLength(4);
+        expect(within(selector).getAllByRole("option")).toHaveLength(5);
         fireEvent.change(selector, { target: { value: mode } });
         step(9);
         fireEvent.click(screen.getByRole("button", { name: "EX: CBNZ X0, #-4" }));
@@ -82,6 +110,7 @@ describe("pipeline workspace", () =>
     it("shows at-fetch predictions, resolved results, and historical predictor state", () =>
     {
         render(<App />);
+        fireEvent.change(screen.getByRole("combobox", { name: "Branch prediction" }), { target: { value: "two-bit" } });
         load("MOVZ X0, #10\nSUBS X0, X0, #1\nCBNZ X0, #-4\nHLT");
         step(9);
         fireEvent.click(screen.getByRole("button", { name: "EX: CBNZ X0, #-4" }));
