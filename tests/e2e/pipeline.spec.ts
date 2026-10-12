@@ -85,6 +85,52 @@ test("inspect learned predictions and compare loop execution with the static bas
     expect(errors).toEqual([]);
 });
 
+for (const { mode, trained, exited } of [
+    { mode: "one-bit", trained: "1 / Last taken", exited: "0 / Last not taken" },
+    { mode: "taken", trained: "Always taken", exited: "Always taken" }
+])
+{
+    test(`inspect ${mode} predictions, historical state, and reset`, async ({ page }, testInfo) =>
+    {
+        const errors: string[] = [];
+        page.on("pageerror", (error) => errors.push(error.message));
+        await page.goto("/");
+        await page.getByRole("textbox", { name: "Assembly program" }).fill("MOVZ X0, #10\nSUBS X0, X0, #1\nCBNZ X0, #-4\nHLT");
+        await page.getByRole("button", { name: "Load program", exact: true }).click();
+        const selector = page.getByRole("combobox", { name: "Branch prediction" });
+        await expect(selector.locator("option")).toHaveCount(4);
+        await selector.selectOption(mode);
+        const step = page.getByRole("button", { name: "Step one clock cycle" });
+        for (let i = 0; i < 9; i += 1) await step.click();
+        await page.getByRole("button", { name: "EX: CBNZ X0, #-4", exact: true }).click();
+        const inspector = page.getByRole("region", { name: "Instruction inspector" });
+        const predictor = page.getByRole("region", { name: "Branch predictor" });
+        await expect(inspector.getByText(trained, { exact: true })).toBeVisible();
+        await expect(predictor.getByText(trained, { exact: true })).toBeVisible();
+        await expect(inspector.getByText("Correct", { exact: true })).toBeVisible();
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await page.screenshot({ path: testInfo.outputPath(`${mode}-controls.jpg`), quality: 75 });
+        await page.getByRole("slider", { name: "Clock speed" }).press("End");
+        await page.getByRole("button", { name: "Run", exact: true }).click();
+        await expect(page.getByText("Halted", { exact: true })).toBeVisible();
+        await expect(page.getByRole("slider", { name: "Recorded cycle" })).toHaveValue("30");
+        await expect(predictor.getByText(exited, { exact: true })).toBeVisible();
+        await expect(inspector.getByText(trained, { exact: true })).toBeVisible();
+        await page.getByRole("button", { name: "Inspect cycle 9, EX" }).click();
+        await expect(predictor.getByText(trained, { exact: true })).toBeVisible();
+        await page.getByRole("button", { name: "Live", exact: true }).click();
+        await expect(predictor.getByText(exited, { exact: true })).toBeVisible();
+        await predictor.scrollIntoViewIfNeeded();
+        await page.screenshot({ path: testInfo.outputPath(`${mode}-predictor.jpg`), quality: 75 });
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+        await page.getByRole("button", { name: "Reset and load program" }).click();
+        await expect(selector).toHaveValue(mode);
+        await expect(page.getByRole("slider", { name: "Recorded cycle" })).toHaveValue("0");
+        await expect(predictor.getByText("No trained entries")).toBeVisible();
+        expect(errors).toEqual([]);
+    });
+}
+
 test("pause, reset, invalid program, and precise memory fault", async ({ page }) =>
 {
     await page.goto("/");

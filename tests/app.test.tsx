@@ -21,6 +21,36 @@ function load(source: string): void
 
 describe("pipeline workspace", () =>
 {
+    it.each([
+        { mode: "one-bit", trained: "1 / Last taken", exited: "0 / Last not taken" },
+        { mode: "taken", trained: "Always taken", exited: "Always taken" }
+    ])("inspects $mode state across resolution, history, and reset", ({ mode, trained, exited }) =>
+    {
+        render(<App />);
+        load("MOVZ X0, #10\nSUBS X0, X0, #1\nCBNZ X0, #-4\nHLT");
+        const selector = screen.getByRole("combobox", { name: "Branch prediction" });
+        expect(within(selector).getAllByRole("option")).toHaveLength(4);
+        fireEvent.change(selector, { target: { value: mode } });
+        step(9);
+        fireEvent.click(screen.getByRole("button", { name: "EX: CBNZ X0, #-4" }));
+        const inspector = screen.getByRole("region", { name: "Instruction inspector" });
+        const predictor = screen.getByRole("region", { name: "Branch predictor" });
+        expect(within(inspector).getByText(trained)).toBeInTheDocument();
+        expect(within(predictor).getByText(trained)).toBeInTheDocument();
+        expect(within(inspector).getByText("Correct", { exact: true })).toBeInTheDocument();
+        step(21);
+        expect(within(predictor).getByText(exited)).toBeInTheDocument();
+        expect(within(inspector).getByText(trained)).toBeInTheDocument();
+        fireEvent.change(screen.getByRole("slider", { name: "Recorded cycle" }), { target: { value: "9" } });
+        expect(within(predictor).getByText(trained)).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Live" }));
+        expect(within(predictor).getByText(exited)).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Reset and load program" }));
+        expect(selector).toHaveValue(mode);
+        expect(screen.getByText("No trained entries")).toBeInTheDocument();
+        expect(screen.getByRole("slider", { name: "Recorded cycle" })).toHaveValue("0");
+    });
+
     it("shows at-fetch predictions, resolved results, and historical predictor state", () =>
     {
         render(<App />);

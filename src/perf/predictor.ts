@@ -1,14 +1,14 @@
 import { applyWidth } from "../core/shifter";
 import type {
     BranchPrediction, BranchResolution, DirectionCounter, PredictorEntry,
-    PredictorOptions, PredictorSnapshot
+    PredictionMode, PredictorOptions, PredictorSnapshot
 } from "../sim/prediction";
 import type { Word } from "../sim/types";
 
 export class BranchPredictor
 {
-    private readonly mode;
-    private readonly capacity;
+    private readonly mode: PredictionMode;
+    private readonly capacity: number;
     private table: (PredictorEntry | undefined)[] = [];
     private resolved = 0;
     private correct = 0;
@@ -17,7 +17,10 @@ export class BranchPredictor
 
     constructor({ mode = "two-bit", entries = 64 }: PredictorOptions = {})
     {
-        if (mode !== "two-bit" && mode !== "not-taken") throw new Error("Invalid prediction mode.");
+        if (mode !== "two-bit" && mode !== "one-bit" && mode !== "taken" && mode !== "not-taken")
+        {
+            throw new Error("Invalid prediction mode.");
+        }
         if (!Number.isSafeInteger(entries) || entries < 1 || entries > 4096 || (entries & (entries - 1)) !== 0)
         {
             throw new Error("Predictor entries must be a power of two between 1 and 4096.");
@@ -36,9 +39,10 @@ export class BranchPredictor
     public predict(pc: Word): BranchPrediction
     {
         const index = this.index(pc);
-        const entry = this.mode === "two-bit" ? this.table[index] : undefined;
+        const entry = this.mode !== "not-taken" ? this.table[index] : undefined;
         const hit = entry?.pc === pc;
-        const taken = hit && (!entry.conditional || entry.counter >= 2);
+        const taken = hit && (!entry.conditional || this.mode === "taken"
+            || (entry.counter ?? 0) >= (this.mode === "one-bit" ? 1 : 2));
         return {
             mode: this.mode, index, btbHit: hit, taken,
             nextPc: taken ? entry.target : applyWidth(pc + 4n, 64),
@@ -56,16 +60,21 @@ export class BranchPredictor
         this.resolved += 1;
         if (!mispredicted) this.correct += 1;
 
-        if (this.mode === "two-bit")
+        if (this.mode !== "not-taken")
         {
             if (prediction.btbHit) this.btbHits += 1;
             else this.btbMisses += 1;
             const index = this.index(pc);
             const previous = this.table[index];
-            const counter = previous?.pc === pc && previous.conditional === conditional ? previous.counter : 1;
+            let counter: DirectionCounter | undefined;
+            if (conditional && this.mode === "one-bit") counter = taken ? 1 : 0;
+            else if (conditional && this.mode === "two-bit")
+            {
+                const previousCounter = previous?.pc === pc && previous.conditional ? previous.counter ?? 1 : 1;
+                counter = Math.max(0, Math.min(3, previousCounter + (taken ? 1 : -1))) as DirectionCounter;
+            }
             this.table[index] = {
-                index, pc, target: applyWidth(target, 64), conditional,
-                counter: conditional ? Math.max(0, Math.min(3, counter + (taken ? 1 : -1))) as DirectionCounter : 3
+                index, pc, target: applyWidth(target, 64), conditional, counter
             };
         }
         return { nextPc, mispredicted };

@@ -1,11 +1,20 @@
 import { ArrowRight, Binary, CircleCheck, CircuitBoard, GitBranch, Layers, X } from "lucide-react";
 import type { PipelineSnapshot, PipelineStage, PipelineToken } from "../sim/pipeline";
+import type { DirectionCounter, PredictionMode } from "../sim/prediction";
 import { registerName } from "../pipe/operands";
 import { formatHex } from "./format";
 
 const stageLabels = { IF: "Instruction fetch", ID: "Decode / register read", EX: "Execute", MEM: "Memory access", WB: "Writeback" };
 const latchNames = ["IF/ID", "ID/EX", "EX/MEM", "MEM/WB"] as const;
 const counterLabels = ["Strong not taken", "Weak not taken", "Weak taken", "Strong taken"];
+
+function directionState(mode: PredictionMode, counter?: DirectionCounter): string
+{
+    if (mode === "taken") return "Always taken";
+    if (mode === "not-taken") return "Always not taken";
+    if (counter === undefined) return "--";
+    return mode === "one-bit" ? `${counter} / Last ${counter ? "taken" : "not taken"}` : `${counter} / ${counterLabels[counter]}`;
+}
 
 interface PipelineProps
 {
@@ -86,7 +95,8 @@ function TokenDetails({ token }: { token: PipelineToken })
                         <DataRow label="Prediction (IF)" value={token.prediction.taken ? "Taken" : "Not taken"} />
                         <DataRow label="Next PC (IF)" value={formatHex(token.prediction.nextPc, 4)} />
                         <DataRow label="BTB lookup" value={token.prediction.mode === "not-taken" ? "Disabled" : `${token.prediction.btbHit ? "Hit" : "Miss"} / index ${token.prediction.index}`} />
-                        <DataRow label="Counter (IF)" value={token.prediction.counter === undefined ? "--" : `${token.prediction.counter} / ${counterLabels[token.prediction.counter]}`} />
+                        <DataRow label={token.prediction.mode === "one-bit" ? "History bit (IF)" : token.prediction.mode === "two-bit" ? "Counter (IF)" : "Direction policy"}
+                            value={directionState(token.prediction.mode, token.prediction.counter)} />
                         <DataRow label="Next PC (EX)" value={token.branchResolution ? formatHex(token.branchResolution.nextPc, 4) : "Pending EX"} />
                         <DataRow label="Prediction result" value={token.branchResolution ? token.branchResolution.mispredicted ? "Mispredicted" : "Correct" : "Pending EX"} />
                     </>}
@@ -193,7 +203,7 @@ export function PipelineView({ snapshot, history, selectedId, onSelect, onCycle 
 function PredictorPanel({ snapshot }: { snapshot: PipelineSnapshot })
 {
     const predictor = snapshot.predictor;
-    const enabled = predictor.mode === "two-bit";
+    const enabled = predictor.mode !== "not-taken";
     return <section className="predictor-section" aria-label="Branch predictor">
         <div className="section-heading"><h2><GitBranch size={18} /> Branch predictor</h2>
             <span className="muted">{enabled ? `${predictor.entries.length} / ${predictor.capacity} BTB entries` : "Always not taken"}</span>
@@ -209,11 +219,11 @@ function PredictorPanel({ snapshot }: { snapshot: PipelineSnapshot })
         </div>
         {enabled && <div className="predictor-scroll">
             <table className="predictor-table" aria-label="Branch target buffer">
-                <thead><tr><th>Index</th><th>Branch PC</th><th>Target</th><th>Type</th><th>Counter</th></tr></thead>
+                <thead><tr><th>Index</th><th>Branch PC</th><th>Target</th><th>Type</th><th>Direction state</th></tr></thead>
                 <tbody>{predictor.entries.map((entry) => <tr key={entry.index}>
                     <td>{entry.index}</td><td><code>{formatHex(entry.pc, 4)}</code></td><td><code>{formatHex(entry.target, 4)}</code></td>
                     <td>{entry.conditional ? "Conditional" : "Unconditional"}</td>
-                    <td>{entry.conditional ? `${entry.counter} / ${counterLabels[entry.counter]}` : "Always taken"}</td>
+                    <td>{entry.conditional ? directionState(predictor.mode, entry.counter) : "Always taken"}</td>
                 </tr>)}</tbody>
             </table>
             {!predictor.entries.length && <p className="empty-state">No trained entries</p>}

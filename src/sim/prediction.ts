@@ -1,6 +1,6 @@
 import type { Word } from "./types";
 
-export type PredictionMode = "two-bit" | "not-taken";
+export type PredictionMode = "two-bit" | "one-bit" | "taken" | "not-taken";
 export type DirectionCounter = 0 | 1 | 2 | 3;
 
 export interface PredictorOptions
@@ -32,7 +32,8 @@ export interface PredictorEntry
     pc: Word;
     target: Word;
     conditional: boolean;
-    counter: DirectionCounter;
+    // Conditional history: 0/1 for one-bit, 0..3 for two-bit; absent for static policies.
+    counter?: DirectionCounter;
 }
 
 export interface PredictorSnapshot

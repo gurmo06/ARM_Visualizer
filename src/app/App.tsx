@@ -155,6 +155,8 @@ export function App()
                     title={dirty ? "Load edited source before changing prediction" : "Changing prediction resets the loaded program"}
                     onChange={(event) => loadProgram(loadedProgram, event.target.value as PredictionMode)}>
                     <option value="two-bit">2-bit + BTB</option>
+                    <option value="one-bit">1-bit + BTB</option>
+                    <option value="taken">Always taken + BTB</option>
                     <option value="not-taken">Always not taken</option>
                 </select>
             </div>

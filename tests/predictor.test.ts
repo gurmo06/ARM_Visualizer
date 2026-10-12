@@ -1,8 +1,49 @@
 import { describe, expect, it } from "vitest";
 import { BranchPredictor } from "../src/perf/predictor";
+import type { PredictionMode } from "../src/sim/prediction";
 
-describe("tagged two-bit branch predictor", () =>
+const btbModes = ["two-bit", "one-bit", "taken"] as const;
+
+describe("branch prediction policies", () =>
 {
+    it("uses the last resolved outcome as a single history bit", () =>
+    {
+        const predictor = new BranchPredictor({ mode: "one-bit" });
+        expect(predictor.predict(0n)).toMatchObject({ btbHit: false, taken: false, counter: undefined, nextPc: 4n });
+        for (const taken of [true, true, false, true, false, false])
+        {
+            const before = predictor.predict(0n);
+            const saved = { ...before };
+            predictor.resolve(0n, 32n, true, taken, before);
+            expect(predictor.predict(0n)).toMatchObject({ btbHit: true, counter: taken ? 1 : 0, taken, nextPc: taken ? 32n : 4n });
+            expect(before).toEqual(saved);
+        }
+        expect(predictor.snapshot()).toMatchObject({ resolved: 6, correct: 2, mispredictions: 4, btbHits: 5, btbMisses: 1 });
+    });
+
+    it("always predicts a learned target even after repeated not-taken outcomes", () =>
+    {
+        const predictor = new BranchPredictor({ mode: "taken" });
+        expect(predictor.predict(0n)).toMatchObject({ btbHit: false, taken: false, nextPc: 4n });
+        for (const taken of [false, false, false, true])
+        {
+            predictor.resolve(0n, 32n, true, taken, predictor.predict(0n));
+            expect(predictor.predict(0n)).toMatchObject({ btbHit: true, taken: true, nextPc: 32n, counter: undefined });
+            expect(predictor.snapshot().entries[0].counter).toBeUndefined();
+        }
+        expect(predictor.snapshot()).toMatchObject({ resolved: 4, correct: 2, mispredictions: 2, btbHits: 3, btbMisses: 1 });
+    });
+
+    it("one-bit prediction flips after one reversal while two-bit prediction retains its bias", () =>
+    {
+        for (const mode of ["one-bit", "two-bit"] as const)
+        {
+            const predictor = new BranchPredictor({ mode });
+            for (const taken of [true, true, false]) predictor.resolve(0n, 32n, true, taken, predictor.predict(0n));
+            expect(predictor.predict(0n).taken).toBe(mode === "two-bit");
+        }
+    });
+
     it("starts cold, indexes instruction addresses, and trains saturating counters", () =>
     {
         const predictor = new BranchPredictor();
@@ -29,9 +70,9 @@ describe("tagged two-bit branch predictor", () =>
         expect(predictor.predict(0n)).toMatchObject({ taken: false, counter: 1 });
     });
 
-    it("predicts unconditional branches only after learning their target", () =>
+    it.each(btbModes)("predicts unconditional branches only after learning their target: %s", (mode) =>
     {
-        const predictor = new BranchPredictor();
+        const predictor = new BranchPredictor({ mode });
         const cold = predictor.predict(0n);
         expect(predictor.resolve(0n, 48n, false, true, cold)).toEqual({ nextPc: 48n, mispredicted: true });
         expect(predictor.predict(0n)).toMatchObject({ taken: true, nextPc: 48n, btbHit: true, counter: undefined });
@@ -40,9 +81,9 @@ describe("tagged two-bit branch predictor", () =>
         expect(predictor.snapshot()).toMatchObject({ resolved: 2, correct: 1, mispredictions: 1 });
     });
 
-    it("checks full PC tags and replaces colliding entries", () =>
+    it.each(btbModes)("checks full PC tags and replaces colliding entries: %s", (mode) =>
     {
-        const predictor = new BranchPredictor({ entries: 4 });
+        const predictor = new BranchPredictor({ mode, entries: 4 });
         predictor.resolve(0n, 8n, false, true, predictor.predict(0n));
         for (const pc of [16n, 0x1_0000_0000n])
         {
@@ -72,9 +113,9 @@ describe("tagged two-bit branch predictor", () =>
         expect(predictor.snapshot()).toMatchObject({ entries: [], resolved: 3, correct: 1, mispredictions: 2, btbHits: 0, btbMisses: 0 });
     });
 
-    it("isolates snapshots and resets all learning and statistics", () =>
+    it.each(btbModes)("isolates snapshots and resets all learning and statistics: %s", (mode) =>
     {
-        const predictor = new BranchPredictor({ entries: 8 });
+        const predictor = new BranchPredictor({ mode, entries: 8 });
         const initial = predictor.snapshot();
         predictor.resolve(0n, 32n, true, true, predictor.predict(0n));
         const snapshot = predictor.snapshot();
@@ -88,5 +129,10 @@ describe("tagged two-bit branch predictor", () =>
     it.each([0, -1, 3, 1.5, 8192, NaN, Infinity])("rejects invalid capacity %s", (entries) =>
     {
         expect(() => new BranchPredictor({ entries })).toThrow("power of two");
+    });
+
+    it("rejects unknown prediction modes", () =>
+    {
+        expect(() => new BranchPredictor({ mode: "invalid" as PredictionMode })).toThrow("Invalid prediction mode");
     });
 });
