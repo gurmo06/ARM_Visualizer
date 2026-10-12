@@ -131,6 +131,48 @@ for (const { mode, trained, exited } of [
     });
 }
 
+for (const { mode, bits, fetchedBits, legend } of [
+    { mode: "one-bit", bits: "1", fetchedBits: "1", legend: "1-bit state encoding" },
+    { mode: "two-bit", bits: "11", fetchedBits: "10", legend: "2-bit state encoding" }
+])
+{
+    test(`read ${mode} bits in Machine and Pipeline using the predictor shortcut`, async ({ page }, testInfo) =>
+    {
+        const errors: string[] = [];
+        page.on("pageerror", (error) => errors.push(error.message));
+        await page.goto("/");
+        await page.getByRole("textbox", { name: "Assembly program" }).fill("MOVZ X0, #10\nSUBS X0, X0, #1\nCBNZ X0, #-4\nHLT");
+        await page.getByRole("button", { name: "Load program", exact: true }).click();
+        await page.getByRole("combobox", { name: "Branch prediction" }).selectOption(mode);
+        for (let i = 0; i < 9; i += 1) await page.getByRole("button", { name: "Step one clock cycle" }).click();
+        const shortcut = page.getByRole("link", { name: "Inspect predictor state" });
+        await shortcut.click();
+        const predictor = page.getByRole("region", { name: "Branch predictor", exact: true });
+        const stored = predictor.getByRole("row", { name: "Branch 0x0008" }).locator(".predictor-bits");
+        await expect(predictor.getByRole("heading", { name: "Branch predictor" })).toBeInViewport();
+        await expect(stored).toBeInViewport();
+        await expect(stored).toHaveText(bits);
+        await expect(predictor.getByRole("list", { name: legend })).toBeVisible();
+        const headingBounds = await predictor.getByRole("heading", { name: "Branch predictor" }).boundingBox();
+        const clockBounds = await page.locator(".clock-deck").boundingBox();
+        expect(headingBounds!.y).toBeGreaterThanOrEqual(clockBounds!.y + clockBounds!.height);
+        await page.screenshot({ path: testInfo.outputPath(`${mode}-machine-bits.jpg`), quality: 75 });
+        await page.getByRole("button", { name: "EX: CBNZ X0, #-4", exact: true }).click();
+        const inspector = page.getByRole("region", { name: "Instruction inspector" });
+        await expect(inspector.locator(".data-row").filter({ hasText: "Bits (IF)" }).locator("code")).toHaveText(fetchedBits);
+        await shortcut.click();
+        await expect(stored).toHaveText(bits);
+        if (mode === "two-bit") await expect(predictor.getByLabel("10 to 11")).toBeVisible();
+        await page.screenshot({ path: testInfo.outputPath(`${mode}-pipeline-bits.jpg`), quality: 75 });
+        await page.getByRole("button", { name: "Previous recorded cycle" }).click();
+        await expect(stored).toHaveText(fetchedBits);
+        await page.getByRole("button", { name: "Live", exact: true }).click();
+        await expect(stored).toHaveText(bits);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+        expect(errors).toEqual([]);
+    });
+}
+
 test("pause, reset, invalid program, and precise memory fault", async ({ page }) =>
 {
     await page.goto("/");

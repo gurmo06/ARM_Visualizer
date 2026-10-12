@@ -257,10 +257,17 @@ branch that happens to share the index. Resolved branches replace colliding entr
 - Always-not-taken mode disables BTB learning and predicts `PC + 4` on every fetch.
   It still records resolved branches and mispredictions for comparison.
 
-In **Pipeline**, select a branch instance to inspect its prediction, at-fetch counter or
-history bit (or static policy), and resolved result. The predictor table and statistics
-follow the selected historical cycle, while instruction details preserve the direction
-state observed by that particular fetch.
+The **Branch predictor** panel is available in both **Machine** and **Pipeline**. The
+binary icon beside the prediction selector jumps directly to it. Each trained branch
+shows its stored **Bits**, direction state, and any **Change** from the previous cycle.
+One-bit values are `0`/`1`; two-bit values are `00`/`01`/`10`/`11`, with a state legend.
+Changed rows are highlighted, and newly trained entries show **Allocated** rather than
+an invented previous value. Static policies and unconditional branches have no state bits.
+
+The table shows state **at the end of the selected cycle**, including when navigating
+history. In **Pipeline**, selecting a branch instance also shows **Bits (IF)**: the
+original state observed by that particular fetch, which can differ from the current
+table after training. A cold fetch displays `--`, not a fabricated zero-valued counter.
 
 Try this loop to see the predictor warm up:
 

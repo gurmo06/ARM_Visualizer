@@ -21,6 +21,34 @@ function load(source: string): void
 
 describe("pipeline workspace", () =>
 {
+    it("exposes stored bits in Machine and preserves at-fetch bits through training and history", () =>
+    {
+        render(<App />);
+        load("MOVZ X0, #10\nSUBS X0, X0, #1\nCBNZ X0, #-4\nHLT");
+        expect(screen.getByRole("link", { name: "Inspect predictor state" })).toHaveAttribute("href", "#branch-predictor");
+        expect(screen.getByRole("region", { name: "Branch predictor" })).toHaveAttribute("id", "branch-predictor");
+        step(3);
+        expect(screen.getByText("No trained entries")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "IF: CBNZ X0, #-4" }));
+        const inspector = screen.getByRole("region", { name: "Instruction inspector" });
+        expect(within(inspector).getByText("Bits (IF)").parentElement?.querySelector("code")).toHaveTextContent(/^--$/);
+        step(2);
+        expect(screen.getByText("Allocated")).toBeInTheDocument();
+        expect(within(inspector).getByText("Bits (IF)").parentElement?.querySelector("code")).toHaveTextContent(/^--$/);
+        step(4);
+        fireEvent.click(screen.getByRole("button", { name: "EX: CBNZ X0, #-4" }));
+        expect(within(inspector).getByText("Bits (IF)").parentElement?.querySelector("code")).toHaveTextContent(/^10$/);
+        expect(within(screen.getByRole("row", { name: "Branch 0x0008" })).getAllByRole("cell")[1]).toHaveTextContent(/^11$/);
+        expect(screen.getByLabelText("10 to 11")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Machine" }));
+        expect(screen.getByLabelText("10 to 11")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Previous recorded cycle" }));
+        expect(within(screen.getByRole("row", { name: "Branch 0x0008" })).getAllByRole("cell")[1]).toHaveTextContent(/^10$/);
+        expect(screen.queryByLabelText("10 to 11")).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Live" }));
+        expect(screen.getByLabelText("10 to 11")).toBeInTheDocument();
+    });
+
     it.each([
         { mode: "one-bit", trained: "1 / Last taken", exited: "0 / Last not taken" },
         { mode: "taken", trained: "Always taken", exited: "Always taken" }

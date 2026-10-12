@@ -1,20 +1,11 @@
 import { ArrowRight, Binary, CircleCheck, CircuitBoard, GitBranch, Layers, X } from "lucide-react";
 import type { PipelineSnapshot, PipelineStage, PipelineToken } from "../sim/pipeline";
-import type { DirectionCounter, PredictionMode } from "../sim/prediction";
 import { registerName } from "../pipe/operands";
-import { formatHex } from "./format";
+import { formatHex, formatPredictionBits, formatPredictionState } from "./format";
+import { PredictorPanel } from "./PredictorPanel";
 
 const stageLabels = { IF: "Instruction fetch", ID: "Decode / register read", EX: "Execute", MEM: "Memory access", WB: "Writeback" };
 const latchNames = ["IF/ID", "ID/EX", "EX/MEM", "MEM/WB"] as const;
-const counterLabels = ["Strong not taken", "Weak not taken", "Weak taken", "Strong taken"];
-
-function directionState(mode: PredictionMode, counter?: DirectionCounter): string
-{
-    if (mode === "taken") return "Always taken";
-    if (mode === "not-taken") return "Always not taken";
-    if (counter === undefined) return "--";
-    return mode === "one-bit" ? `${counter} / Last ${counter ? "taken" : "not taken"}` : `${counter} / ${counterLabels[counter]}`;
-}
 
 interface PipelineProps
 {
@@ -96,7 +87,9 @@ function TokenDetails({ token }: { token: PipelineToken })
                         <DataRow label="Next PC (IF)" value={formatHex(token.prediction.nextPc, 4)} />
                         <DataRow label="BTB lookup" value={token.prediction.mode === "not-taken" ? "Disabled" : `${token.prediction.btbHit ? "Hit" : "Miss"} / index ${token.prediction.index}`} />
                         <DataRow label={token.prediction.mode === "one-bit" ? "History bit (IF)" : token.prediction.mode === "two-bit" ? "Counter (IF)" : "Direction policy"}
-                            value={directionState(token.prediction.mode, token.prediction.counter)} />
+                            value={formatPredictionState(token.prediction.mode, token.prediction.counter)} />
+                        {(token.prediction.mode === "one-bit" || token.prediction.mode === "two-bit") &&
+                            <DataRow label="Bits (IF)" value={formatPredictionBits(token.prediction.mode, token.prediction.counter)} />}
                         <DataRow label="Next PC (EX)" value={token.branchResolution ? formatHex(token.branchResolution.nextPc, 4) : "Pending EX"} />
                         <DataRow label="Prediction result" value={token.branchResolution ? token.branchResolution.mispredicted ? "Mispredicted" : "Correct" : "Pending EX"} />
                     </>}
@@ -109,6 +102,7 @@ function TokenDetails({ token }: { token: PipelineToken })
 
 export function PipelineView({ snapshot, history, selectedId, onSelect, onCycle }: PipelineProps)
 {
+    const previous = history.find((entry) => entry.cycle === snapshot.cycle - 1);
     const recorded = history.filter((entry) => entry.cycle <= snapshot.cycle);
     const journey = history.flatMap((entry) => entry.pipeline
         .filter((current) => selectedId !== undefined && current.token?.instanceId === selectedId)
@@ -141,6 +135,8 @@ export function PipelineView({ snapshot, history, selectedId, onSelect, onCycle 
                     <span>CPI <b>{snapshot.retired ? (snapshot.cycle / snapshot.retired).toFixed(2) : "--"}</b></span>
                 </div>
             </section>
+            <PredictorPanel snapshot={{ cycle: snapshot.cycle, predictor: snapshot.predictor }}
+                previous={previous && { cycle: previous.cycle, predictor: previous.predictor }} />
             <section className="instruction-focus" aria-label="Instruction inspector">
                 <div className="section-heading"><h2><GitBranch size={18} /> Instruction focus</h2>
                     {token && <span className={`instruction-status ${latest?.flushed ? "text-danger" : ""}`}>#{token.instanceId} / {status}</span>}
@@ -162,7 +158,6 @@ export function PipelineView({ snapshot, history, selectedId, onSelect, onCycle 
                     <TokenDetails token={token} />
                 </> : <p className="empty-state">{selectedId ? `Instruction #${selectedId} is outside this cycle's retained history.` : "No fetched instruction"}</p>}
             </section>
-            <PredictorPanel snapshot={snapshot} />
             <section className="timeline-section">
                 <div className="section-heading"><h2>Cycle timeline</h2><span className="muted">Recorded cycles {cycles[0]?.cycle ?? 0}-{cycles.at(-1)?.cycle ?? 0} / latest 24 instances</span></div>
                 <div className="timeline-scroll">
@@ -198,37 +193,6 @@ export function PipelineView({ snapshot, history, selectedId, onSelect, onCycle 
             </section>
         </div>
     );
-}
-
-function PredictorPanel({ snapshot }: { snapshot: PipelineSnapshot })
-{
-    const predictor = snapshot.predictor;
-    const enabled = predictor.mode !== "not-taken";
-    return <section className="predictor-section" aria-label="Branch predictor">
-        <div className="section-heading"><h2><GitBranch size={18} /> Branch predictor</h2>
-            <span className="muted">{enabled ? `${predictor.entries.length} / ${predictor.capacity} BTB entries` : "Always not taken"}</span>
-        </div>
-        <div className="pipeline-metrics predictor-metrics">
-            <span>Resolved branches <b>{predictor.resolved}</b></span>
-            <span>Mispredictions <b>{predictor.mispredictions}</b></span>
-            <span title="Correct next-PC predictions / branches resolved in EX">Next-PC accuracy <b>{predictor.resolved ? `${(100 * predictor.correct / predictor.resolved).toFixed(1)}%` : "--"}</b></span>
-            {enabled && <>
-                <span title="At-fetch BTB hits for branches that reached EX">BTB hits <b>{predictor.btbHits}</b></span>
-                <span title="At-fetch BTB misses for branches that reached EX">BTB misses <b>{predictor.btbMisses}</b></span>
-            </>}
-        </div>
-        {enabled && <div className="predictor-scroll">
-            <table className="predictor-table" aria-label="Branch target buffer">
-                <thead><tr><th>Index</th><th>Branch PC</th><th>Target</th><th>Type</th><th>Direction state</th></tr></thead>
-                <tbody>{predictor.entries.map((entry) => <tr key={entry.index}>
-                    <td>{entry.index}</td><td><code>{formatHex(entry.pc, 4)}</code></td><td><code>{formatHex(entry.target, 4)}</code></td>
-                    <td>{entry.conditional ? "Conditional" : "Unconditional"}</td>
-                    <td>{entry.conditional ? directionState(predictor.mode, entry.counter) : "Always taken"}</td>
-                </tr>)}</tbody>
-            </table>
-            {!predictor.entries.length && <p className="empty-state">No trained entries</p>}
-        </div>}
-    </section>;
 }
 
 function TimelineCell({ current, cycle, onClick }: { current: PipelineStage; cycle: number; onClick: () => void })

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, ChevronLeft, ChevronRight, Cpu, FastForward, FileCheck2, Layers, Monitor, Pause, Play, RotateCcw, StepForward, Upload } from "lucide-react";
+import { AlertCircle, Binary, ChevronLeft, ChevronRight, Cpu, FastForward, FileCheck2, Layers, Monitor, Pause, Play, RotateCcw, StepForward, Upload } from "lucide-react";
 import { decodeAssembly } from "../decode/decoder";
 import type { PipelineSnapshot } from "../sim/pipeline";
 import type { PredictionMode } from "../sim/prediction";
@@ -7,6 +7,7 @@ import { PipelineCPU } from "../top/pipeline_cpu";
 import { formatHex } from "./format";
 import { MemoryPanel } from "./MemoryPanel";
 import { PipelineView, StageStrip } from "./PipelineView";
+import { PredictorPanel } from "./PredictorPanel";
 import githubMark from "./assets/github.svg";
 
 const sampleProgram = `MOVZ X0, #2
@@ -159,6 +160,7 @@ export function App()
                     <option value="taken">Always taken + BTB</option>
                     <option value="not-taken">Always not taken</option>
                 </select>
+                <a className="icon-button small predictor-link" href="#branch-predictor" title="Inspect predictor state" aria-label="Inspect predictor state"><Binary size={16} /></a>
             </div>
             {(error || snapshot.fault) && <div className="fault-banner" role="alert"><AlertCircle size={18} /><span>{error ?? snapshot.fault}</span></div>}
             {view === "pipeline" ? <PipelineView snapshot={snapshot} history={history} selectedId={focusId} onSelect={setSelectedId} onCycle={inspectCycle} /> : <>
@@ -210,6 +212,9 @@ export function App()
                     </div>
                 </section>
                 <section className="pipeline-preview"><div className="section-heading"><h2>Pipeline activity</h2><button type="button" onClick={() => setView("pipeline")}><Layers size={15} /> Open pipeline</button></div><StageStrip snapshot={snapshot} selectedId={focusId} onSelect={inspectInstruction} /></section>
+                {/* Avoid passing register arrays: React's development profiler cannot JSON-serialize BigInt arrays in newly added props. */}
+                <PredictorPanel snapshot={{ cycle: snapshot.cycle, predictor: snapshot.predictor }}
+                    previous={previous && { cycle: previous.cycle, predictor: previous.predictor }} />
                 <MemoryPanel snapshot={snapshot} />
             </>}
             <section className="events-section"><div className="section-heading"><h2>Cycle events</h2><span className="muted">Cycle {snapshot.cycle}</span></div>
