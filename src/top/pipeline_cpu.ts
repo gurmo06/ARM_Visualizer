@@ -3,6 +3,7 @@ import { applyWidth } from "../core/shifter";
 import { decodeAssembly } from "../decode/decoder";
 import { FetchUnit } from "../mem/fetch";
 import { Memory } from "../mem/memory";
+import { BranchPredictor } from "../perf/predictor";
 import { executeToken } from "../pipe/execute";
 import { forwardOperands } from "../pipe/forwarding";
 import { loadUseHazard } from "../pipe/hazards";
@@ -10,6 +11,7 @@ import { readOperands, registerName } from "../pipe/operands";
 import { emptyLatches, emptyStages, latch, stage } from "../pipe/pipeline_regs";
 import { INITIAL_STACK_POINTER } from "../sim/memory_layout";
 import type { PipelineSnapshot, PipelineStage, PipelineToken } from "../sim/pipeline";
+import type { PredictorOptions } from "../sim/prediction";
 import type { CpuEvent, Instruction, PState, Word } from "../sim/types";
 
 export class PipelineCPU
@@ -22,6 +24,7 @@ export class PipelineCPU
     private flags: PState = { ...INITIAL_PSTATE };
     private memory = new Memory();
     private fetchUnit = new FetchUnit();
+    private predictor: BranchPredictor;
     private latches = emptyLatches();
     private stages = emptyStages();
     private events: CpuEvent[] = [];
@@ -34,8 +37,9 @@ export class PipelineCPU
     private fetchStopped = false;
     private fault?: string;
 
-    constructor(program: Instruction[] | string = [], initRegs: Word[] = [])
+    constructor(program: Instruction[] | string = [], initRegs: Word[] = [], prediction: PredictorOptions = {})
     {
+        this.predictor = new BranchPredictor(prediction);
         this.reset_state(program, initRegs);
     }
 
@@ -47,6 +51,7 @@ export class PipelineCPU
         this.pc = this.fetchPc = 0n;
         this.flags = { ...INITIAL_PSTATE };
         this.memory.reset();
+        this.predictor.reset();
         this.latches = emptyLatches();
         this.stages = emptyStages();
         this.events = [];
@@ -64,7 +69,8 @@ export class PipelineCPU
             memorySizeBytes: this.memory.sizeBytes, memory: this.memory.snapshot(),
             pstate: this.flags, halted: this.halted, fault: this.fault,
             fetchPc: this.fetchPc, retired: this.retired, stalls: this.stalls,
-            flushed: this.flushed, pipeline: this.stages, latches: this.latches, events: this.events
+            flushed: this.flushed, predictor: this.predictor.snapshot(),
+            pipeline: this.stages, latches: this.latches, events: this.events
         });
     }
 
@@ -129,6 +135,14 @@ export class PipelineCPU
             "IF/ID": latch(fetched), "ID/EX": latch(id), "EX/MEM": latch(ex), "MEM/WB": latch(mem)
         };
 
+        if (ex?.branchTaken !== undefined && !ex.fault && !mem?.fault)
+        {
+            ex.branchResolution = this.predictor.resolve(ex.address, ex.branchTarget!,
+                ex.instruction!.opcode !== "B", ex.branchTaken, ex.prediction!);
+            this.record(ex.branchResolution.mispredicted ? "mispredict" : "prediction",
+                `Predicted next PC 0x${ex.prediction!.nextPc.toString(16)}; actual 0x${ex.branchResolution.nextPc.toString(16)}.`, ex);
+        }
+
         // Older faults take priority over younger branches and halt instructions.
         if (mem?.fault)
         {
@@ -138,14 +152,15 @@ export class PipelineCPU
             this.latches["EX/MEM"] = latch();
             this.fetchStopped = true;
         }
-        else if (ex && (ex.fault || ex.branchTaken || ex.instruction?.opcode === "HLT"))
+        else if (ex && (ex.fault || ex.branchResolution?.mispredicted || ex.instruction?.opcode === "HLT"))
         {
-            const reason = ex.fault ? "Older instruction fault" : ex.branchTaken ? "Taken branch" : "HLT in EX";
+            const redirect = ex.branchResolution?.mispredicted === true;
+            const reason = ex.fault ? "Older instruction fault" : redirect ? "Branch misprediction" : "HLT in EX";
             this.squash(this.stages.slice(0, 2), reason);
             this.latches["IF/ID"] = latch();
             this.latches["ID/EX"] = latch();
-            this.fetchStopped = !ex.branchTaken;
-            if (ex.branchTaken) this.fetchPc = applyWidth(ex.branchTarget!, 64);
+            this.fetchStopped = !redirect;
+            if (redirect) this.fetchPc = ex.branchResolution!.nextPc;
         }
         else if (stalled)
         {
@@ -169,13 +184,20 @@ export class PipelineCPU
 
     private fetch(): PipelineToken
     {
-        const token: PipelineToken = { instanceId: this.nextId++, address: this.fetchPc, operands: [] };
+        const token: PipelineToken = {
+            instanceId: this.nextId++, address: this.fetchPc, operands: [],
+            prediction: this.predictor.predict(this.fetchPc)
+        };
         this.attempt(token, () =>
         {
             const fetched = this.fetchUnit.fetch(this.program, this.fetchPc);
             token.instruction = fetched.instruction;
-            this.fetchPc = fetched.nextPc;
+            this.fetchPc = token.prediction!.nextPc;
             this.record("fetch", `0x${token.address.toString(16)}: ${token.instruction.sourceText}`, token);
+            if (token.instruction.branch)
+            {
+                this.record("prediction", `${token.prediction!.btbHit ? "BTB hit" : "Sequential prediction"}: next PC 0x${this.fetchPc.toString(16)}.`, token);
+            }
         });
         // A speculative fetch fault is a token. An older branch can still discard it.
         if (token.fault) this.fetchStopped = true;

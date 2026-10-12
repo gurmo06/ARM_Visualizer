@@ -21,6 +21,48 @@ function load(source: string): void
 
 describe("pipeline workspace", () =>
 {
+    it("shows at-fetch predictions, resolved results, and historical predictor state", () =>
+    {
+        render(<App />);
+        load("MOVZ X0, #10\nSUBS X0, X0, #1\nCBNZ X0, #-4\nHLT");
+        step(9);
+        fireEvent.click(screen.getByRole("button", { name: "EX: CBNZ X0, #-4" }));
+        const inspector = screen.getByRole("region", { name: "Instruction inspector" });
+        const predictor = screen.getByRole("region", { name: "Branch predictor" });
+        expect(within(inspector).getByText("Correct", { exact: true })).toBeInTheDocument();
+        expect(within(inspector).getByText("2 / Weak taken")).toBeInTheDocument();
+        expect(within(predictor).getByText("3 / Strong taken")).toBeInTheDocument();
+        expect(within(predictor).getByText("50.0%")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Inspect cycle 7, IF" }));
+        expect(within(inspector).queryByText("Correct", { exact: true })).not.toBeInTheDocument();
+        expect(within(predictor).getByText("2 / Weak taken")).toBeInTheDocument();
+        expect(within(predictor).getByText("0.0%")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Live" }));
+        expect(within(predictor).getByText("3 / Strong taken")).toBeInTheDocument();
+    });
+
+    it("resets execution and learning when switching predictors and preserves the mode on reload", () =>
+    {
+        vi.useFakeTimers();
+        render(<App />);
+        load("B #0");
+        step(8);
+        fireEvent.click(screen.getByRole("button", { name: "Pipeline" }));
+        fireEvent.click(screen.getByRole("button", { name: "Run" }));
+        fireEvent.change(screen.getByRole("combobox", { name: "Branch prediction" }), { target: { value: "not-taken" } });
+        act(() => vi.advanceTimersByTime(1000));
+        expect(screen.getByRole("slider", { name: "Recorded cycle" })).toHaveValue("0");
+        expect(screen.queryByRole("table", { name: "Branch target buffer" })).not.toBeInTheDocument();
+        step(5);
+        fireEvent.click(screen.getByRole("button", { name: "Reset and load program" }));
+        expect(screen.getByRole("combobox", { name: "Branch prediction" })).toHaveValue("not-taken");
+        fireEvent.change(screen.getByRole("combobox", { name: "Branch prediction" }), { target: { value: "two-bit" } });
+        expect(screen.getByText("No trained entries")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Machine" }));
+        fireEvent.change(screen.getByRole("textbox", { name: "Assembly program" }), { target: { value: "NOP\nHLT" } });
+        expect(screen.getByRole("combobox", { name: "Branch prediction" })).toBeDisabled();
+    });
+
     it("opens an instruction from a stage and shows actual forwarding values", () =>
     {
         render(<App />);

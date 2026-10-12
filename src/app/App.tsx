@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, ChevronLeft, ChevronRight, Cpu, FastForward, FileCheck2, Layers, Monitor, Pause, Play, RotateCcw, StepForward, Upload } from "lucide-react";
 import { decodeAssembly } from "../decode/decoder";
 import type { PipelineSnapshot } from "../sim/pipeline";
+import type { PredictionMode } from "../sim/prediction";
 import { PipelineCPU } from "../top/pipeline_cpu";
 import { formatHex } from "./format";
 import { MemoryPanel } from "./MemoryPanel";
@@ -68,12 +69,12 @@ export function App()
         return () => window.clearInterval(timer);
     }, [running, dirty, latest.halted, speed]);
 
-    function loadProgram(source = program): void
+    function loadProgram(source = program, mode: PredictionMode = latest.predictor.mode): void
     {
         setRunning(false);
         try
         {
-            const cpu = new PipelineCPU(source);
+            const cpu = new PipelineCPU(source, [], { mode });
             cpuRef.current = cpu;
             setProgram(source);
             setLoadedProgram(source);
@@ -147,6 +148,15 @@ export function App()
                 <span className="history-position">{snapshot.cycle} / {latest.cycle}</span>
                 <button type="button" className="live-button" aria-pressed={cursor === undefined} onClick={() => setCursor(undefined)} title="Return to latest cycle"><FastForward size={14} /> Live</button>
             </section>
+            </div>
+            <div className="cpu-settings">
+                <label htmlFor="prediction-mode">Branch prediction</label>
+                <select id="prediction-mode" value={latest.predictor.mode} disabled={dirty}
+                    title={dirty ? "Load edited source before changing prediction" : "Changing prediction resets the loaded program"}
+                    onChange={(event) => loadProgram(loadedProgram, event.target.value as PredictionMode)}>
+                    <option value="two-bit">2-bit + BTB</option>
+                    <option value="not-taken">Always not taken</option>
+                </select>
             </div>
             {(error || snapshot.fault) && <div className="fault-banner" role="alert"><AlertCircle size={18} /><span>{error ?? snapshot.fault}</span></div>}
             {view === "pipeline" ? <PipelineView snapshot={snapshot} history={history} selectedId={focusId} onSelect={setSelectedId} onCycle={inspectCycle} /> : <>

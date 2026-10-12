@@ -5,6 +5,7 @@ import { formatHex } from "./format";
 
 const stageLabels = { IF: "Instruction fetch", ID: "Decode / register read", EX: "Execute", MEM: "Memory access", WB: "Writeback" };
 const latchNames = ["IF/ID", "ID/EX", "EX/MEM", "MEM/WB"] as const;
+const counterLabels = ["Strong not taken", "Weak not taken", "Weak taken", "Strong taken"];
 
 interface PipelineProps
 {
@@ -81,6 +82,14 @@ function TokenDetails({ token }: { token: PipelineToken })
                 {instruction?.branch && <>
                     <DataRow label="Branch target" value={formatHex(instruction.branch.target, 4)} />
                     <DataRow label="Branch decision" value={token.branchTaken === undefined ? "Pending EX" : token.branchTaken ? "Taken" : "Not taken"} />
+                    {token.prediction && <>
+                        <DataRow label="Prediction (IF)" value={token.prediction.taken ? "Taken" : "Not taken"} />
+                        <DataRow label="Next PC (IF)" value={formatHex(token.prediction.nextPc, 4)} />
+                        <DataRow label="BTB lookup" value={token.prediction.mode === "not-taken" ? "Disabled" : `${token.prediction.btbHit ? "Hit" : "Miss"} / index ${token.prediction.index}`} />
+                        <DataRow label="Counter (IF)" value={token.prediction.counter === undefined ? "--" : `${token.prediction.counter} / ${counterLabels[token.prediction.counter]}`} />
+                        <DataRow label="Next PC (EX)" value={token.branchResolution ? formatHex(token.branchResolution.nextPc, 4) : "Pending EX"} />
+                        <DataRow label="Prediction result" value={token.branchResolution ? token.branchResolution.mispredicted ? "Mispredicted" : "Correct" : "Pending EX"} />
+                    </>}
                 </>}
                 {token.fault && <p className="inline-fault">{token.fault}</p>}
             </section>
@@ -143,6 +152,7 @@ export function PipelineView({ snapshot, history, selectedId, onSelect, onCycle 
                     <TokenDetails token={token} />
                 </> : <p className="empty-state">{selectedId ? `Instruction #${selectedId} is outside this cycle's retained history.` : "No fetched instruction"}</p>}
             </section>
+            <PredictorPanel snapshot={snapshot} />
             <section className="timeline-section">
                 <div className="section-heading"><h2>Cycle timeline</h2><span className="muted">Recorded cycles {cycles[0]?.cycle ?? 0}-{cycles.at(-1)?.cycle ?? 0} / latest 24 instances</span></div>
                 <div className="timeline-scroll">
@@ -178,6 +188,37 @@ export function PipelineView({ snapshot, history, selectedId, onSelect, onCycle 
             </section>
         </div>
     );
+}
+
+function PredictorPanel({ snapshot }: { snapshot: PipelineSnapshot })
+{
+    const predictor = snapshot.predictor;
+    const enabled = predictor.mode === "two-bit";
+    return <section className="predictor-section" aria-label="Branch predictor">
+        <div className="section-heading"><h2><GitBranch size={18} /> Branch predictor</h2>
+            <span className="muted">{enabled ? `${predictor.entries.length} / ${predictor.capacity} BTB entries` : "Always not taken"}</span>
+        </div>
+        <div className="pipeline-metrics predictor-metrics">
+            <span>Resolved branches <b>{predictor.resolved}</b></span>
+            <span>Mispredictions <b>{predictor.mispredictions}</b></span>
+            <span title="Correct next-PC predictions / branches resolved in EX">Next-PC accuracy <b>{predictor.resolved ? `${(100 * predictor.correct / predictor.resolved).toFixed(1)}%` : "--"}</b></span>
+            {enabled && <>
+                <span title="At-fetch BTB hits for branches that reached EX">BTB hits <b>{predictor.btbHits}</b></span>
+                <span title="At-fetch BTB misses for branches that reached EX">BTB misses <b>{predictor.btbMisses}</b></span>
+            </>}
+        </div>
+        {enabled && <div className="predictor-scroll">
+            <table className="predictor-table" aria-label="Branch target buffer">
+                <thead><tr><th>Index</th><th>Branch PC</th><th>Target</th><th>Type</th><th>Counter</th></tr></thead>
+                <tbody>{predictor.entries.map((entry) => <tr key={entry.index}>
+                    <td>{entry.index}</td><td><code>{formatHex(entry.pc, 4)}</code></td><td><code>{formatHex(entry.target, 4)}</code></td>
+                    <td>{entry.conditional ? "Conditional" : "Unconditional"}</td>
+                    <td>{entry.conditional ? `${entry.counter} / ${counterLabels[entry.counter]}` : "Always taken"}</td>
+                </tr>)}</tbody>
+            </table>
+            {!predictor.entries.length && <p className="empty-state">No trained entries</p>}
+        </div>}
+    </section>;
 }
 
 function TimelineCell({ current, cycle, onClick }: { current: PipelineStage; cycle: number; onClick: () => void })

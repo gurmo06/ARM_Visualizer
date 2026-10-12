@@ -20,12 +20,13 @@ a complete Arm emulator or a timing model of a specific Cortex processor.
 | Program input | Editable assembly and source-file upload (`.s`, `.asm`, `.txt`; up to 1 MiB). |
 | Machine view | X0-X30, XZR, SP, architectural PC, fetch PC, NZCV flags, changed-register highlighting, and stage indicators in the program listing. |
 | Pipeline view | IF, ID, EX, MEM, and WB activity; instruction focus; cycle timeline; interstage registers and valid bits. |
-| Instruction inspection | Register inputs, forwarding sources and producer IDs, ALU inputs/results, memory addresses/data, NZCV results, and branch decisions. |
+| Instruction inspection | Register inputs, forwarding sources and producer IDs, ALU inputs/results, memory addresses/data, NZCV results, and predicted versus resolved branch outcomes. |
 | Execution | Clock stepping, run/pause, reset, and adjustable playback from 1 to 16 simulated cycles per second. |
 | History | The latest 256 snapshots, with cycle navigation and per-cycle events. |
 | Data memory | 64 KiB of little-endian RAM, a 128-byte inspection window, address entry, paging, and SP tracking. |
-| Pipeline behavior | EX/MEM and MEM/WB forwarding, load-use stalls, bubbles, taken-branch flushes, and ordered halt/fault handling. |
-| Counters | Cycles, retired instructions, load-use stalls, flushed slots, and cycles per retired instruction (CPI). |
+| Pipeline behavior | EX/MEM and MEM/WB forwarding, load-use stalls, bubbles, misprediction recovery, and ordered halt/fault handling. |
+| Branch prediction | 64-entry tagged branch-target buffer (BTB) with two-bit counters, a live/historical table, and an always-not-taken comparison mode. |
+| Counters | Cycles, retired instructions, load-use stalls, flushed slots, CPI, resolved branches, mispredictions, next-PC accuracy, and BTB hits/misses. |
 
 The sequential CPU is retained as a reference engine for tests. The website uses the
 pipelined CPU.
@@ -70,7 +71,10 @@ The app starts with a loaded sample program.
    automatically.
 
 **Reset and load program** reloads the editor's contents and clears registers, flags,
-RAM, pipeline state, and history. Icon controls have hover tooltips.
+RAM, pipeline state, predictor learning/counters, and history. Icon controls have hover tooltips.
+The **Branch prediction** selector switches between **2-bit + BTB** (default) and
+**Always not taken**. Changing it resets the loaded program; subsequent loads and resets
+preserve the selected mode. Load edited source before changing the mode.
 
 ### Live and History
 
@@ -108,7 +112,7 @@ Useful cycles to inspect:
 
 - **Cycle 5:** ADD is in EX, receiving X0 from MEM/WB and X1 from EX/MEM.
 - **Cycle 8:** SUBS waits in ID for the preceding LDR. The pipeline inserts one load-use bubble.
-- **Cycle 11:** CBZ resolves as taken in EX, flushing the younger MOVZ and HLT instances.
+- **Cycle 11:** CBZ resolves as taken in EX after a cold prediction of not taken, flushing the younger MOVZ and HLT instances.
 - **Cycle 12:** HLT is fetched again at the branch target.
 - **Cycle 16:** HLT retires and the simulator stops.
 
@@ -121,9 +125,10 @@ In the sample, `CBZ X4, #8` at `0x001C` checks whether **X4 itself equals zero**
 A zero branches to `0x001C + 8 = 0x0024`, the HLT instruction. Otherwise, execution
 continues at `0x0020`, the MOVZ instruction. CBZ and CBNZ do not test the PSTATE Z flag.
 
-On a taken branch, this pipeline clears both younger stage slots and refetches the target.
-That also discards an already-fetched instruction at the target address, as happens with
-HLT in the sample. Fetching HLT by itself does not halt the CPU.
+On a misprediction, this pipeline clears both younger stage slots and fetches the correct
+next address on the following cycle. That also discards an already-fetched instruction at
+the target address, as happens with HLT in the sample. A correctly predicted taken branch
+does not flush. Fetching HLT by itself does not halt the CPU.
 
 ## Supported Assembly
 
@@ -177,7 +182,7 @@ data memory, not encoded instruction bytes.
 
 | Stage | Work performed | Output register |
 | --- | --- | --- |
-| IF | Fetch at fetch PC; advance sequentially by four bytes. | IF/ID |
+| IF | Fetch at fetch PC; select the next PC using the branch predictor. | IF/ID |
 | ID | Read and route register, SP, and zero-register operands. | ID/EX |
 | EX | Forward operands; execute ALU/shift operations; calculate addresses and resolve branches. | EX/MEM |
 | MEM | Load or store data memory. | MEM/WB |
@@ -194,8 +199,10 @@ N + 4 cycles.
 - **Load-use hazards:** an immediate consumer of an LDR result waits one cycle.
   PC and IF/ID are held while a bubble enters ID/EX. Load-to-store dependencies also
   stall; there is no late store-data bypass into MEM.
-- **Branches:** fetch proceeds sequentially until EX resolves the branch. A taken branch
-  flushes the two younger stage slots and fetches its target next cycle.
+- **Branches:** IF speculates using the BTB and direction counter; EX compares the saved
+  predicted next PC with the actual next PC. A mismatch flushes both younger slots and
+  redirects fetch next cycle, including recovery to fallthrough when a taken prediction
+  was wrong. Correct predictions keep the pipeline moving.
 - **Halt and faults:** HLT stops fetch in EX and halts on retirement. Faults travel with
   their instructions and are reported at WB, allowing older work to finish while
   suppressing younger side effects. Wrong-path instructions and fetch faults can be flushed.
@@ -209,6 +216,56 @@ and can be ahead of architectural PC or on a path later discarded.
 The `PipelineCPU.run(n)` API executes up to n additional cycles and can resume after
 reaching that budget. The UI uses individual clock steps and runs until paused,
 halted, or faulted.
+
+### Branch Predictor
+
+The default predictor is a **direct-mapped, full-PC-tagged, 64-entry BTB**. Its index is
+`(PC >> 2) & (entries - 1)`. A tag mismatch is a miss, not a prediction from another
+branch that happens to share the index. Resolved branches replace colliding entries.
+
+- IF looks up the PC only. A cold miss predicts sequential `PC + 4`; it does not peek
+  at the decoded branch target. A BTB hit supplies the previously learned target.
+- Conditional branches use a two-bit saturating counter: 0/1 predict not taken,
+  2/3 predict taken. A newly allocated entry starts at 1 (weak not taken), then trains
+  on the actual result. Taken increments toward 3; not taken decrements toward 0.
+- Known unconditional `B` instructions predict taken on a BTB hit. They still incur
+  a cold miss on their first execution.
+- EX resolves using forwarded operands. Training happens at the end of the cycle,
+  after that cycle's IF lookup. Each instruction retains its original prediction,
+  even if the table changes before it reaches EX.
+- Only branches that resolve in EX train or increment statistics. Squashed branches
+  do not train; an older memory fault also suppresses younger branch resolution.
+  BTB hit/miss counts describe the original lookups of those resolved branches, not
+  all speculative instruction fetches.
+- Accuracy measures **correct next PCs**, not just directions. A branch to `PC + 4`
+  needs no flush when the predicted and actual directions differ but the address agrees.
+- Always-not-taken mode disables BTB learning and predicts `PC + 4` on every fetch.
+  It still records resolved branches and mispredictions for comparison.
+
+In **Pipeline**, select a branch instance to inspect its prediction, at-fetch counter,
+and resolved result. The predictor table and counters follow the selected historical
+cycle, while instruction details preserve the counter observed by that particular fetch.
+
+Try this loop to see the predictor warm up:
+
+```asm
+MOVZ X0, #10
+SUBS X0, X0, #1
+CBNZ X0, #-4
+HLT
+```
+
+Both modes retire 22 instructions and finish with X0 = 0. The two-bit predictor takes
+**30 cycles with 2 mispredictions** (first taken branch and loop exit), versus
+**44 cycles with 9 mispredictions** for always-not-taken. These are modeled cycle counts,
+not a promise of faster JavaScript execution. Small or irregular programs can see no
+benefit, or perform worse than static prediction.
+
+The simulator API also accepts `new PipelineCPU(source, initialRegisters, { mode:
+"two-bit", entries: 64 })`. Capacity must be a power of two from 1 to 4096. This is a
+small educational hardware model, not a reproduction of a modern Cortex predictor.
+Global-history prediction, indirect branches, return prediction, and context tagging
+are not implemented.
 
 ## Development and Checks
 
@@ -237,12 +294,10 @@ PLAYWRIGHT_CHANNEL=chrome npm run test:e2e
 
 Playwright starts or reuses a local server at `http://127.0.0.1:5174`. Browser artifacts
 are written to `test-results/`. Tests cover register behavior, flags, memory, branches,
-forwarding, stalls, flushing, faults, snapshot isolation, and UI playback/history.
-Pipeline tests also compare final architectural state with the sequential CPU.
-
-Known test caveat: [the browser workflow](tests/e2e/pipeline.spec.ts) still contains
-heading assertions for the old name, "System Visualizer". Those assertions need to
-be updated to "ARM Visualizer" for the first workflow to pass with the current UI.
+forwarding, stalls, flushing, faults, snapshot isolation, predictor training/collisions,
+speculative recovery, and UI playback/history. Branch-heavy programs are checked against
+the sequential CPU with multiple BTB capacities and both prediction modes. Browser tests
+also compare loop execution and inspect predictor history on desktop and mobile.
 
 ### Project Layout
 
@@ -255,6 +310,7 @@ be updated to "ARM Visualizer" for the first workflow to pass with the current U
 | [`src/decode/`](src/decode/) | Assembly parsing and immediate handling. |
 | [`src/core/`](src/core/) | ALU, shifter, and register-related building blocks. |
 | [`src/mem/`](src/mem/) | Fetch and data-memory support. |
+| [`src/perf/predictor.ts`](src/perf/predictor.ts) | Tagged BTB, saturating counters, predictions, training, and statistics. |
 | [`src/sim/`](src/sim/) | Shared instruction/state types, pipeline snapshots, and memory layout. |
 | [`tests/`](tests/) | Simulator and React tests, plus Playwright workflows in `tests/e2e/`. |
 | [`public/`](public/) | Static assets, including the CPU favicon. |
@@ -285,8 +341,8 @@ Areas still to implement or expand:
 - Encoded 32-bit instruction decoding, machine-code upload, labels, and stricter assembly validation.
 - More AArch64 instructions and addressing modes, including pre/post-indexed loads and stores.
 - Instruction/data caches, refill timing, and variable memory latency.
-- MMU/TLB behavior and branch prediction.
-- More detailed performance counters beyond the existing cycle, retirement, stall, flush, and CPI values.
+- MMU/TLB behavior and more advanced branch predictors.
+- Cache/memory performance counters beyond the existing pipeline and branch statistics.
 
 There is no privilege-level model, exception vectoring, operating-system environment,
 or self-modifying code support. HLT is a simulator stop convention, not a modeled

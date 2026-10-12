@@ -5,11 +5,11 @@ test("inspect forwarding, stalls, retirement, history, and memory", async ({ pag
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto("/");
-    await expect(page.getByRole("heading", { name: "System Visualizer" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "ARM Visualizer" })).toBeVisible();
     const step = page.getByRole("button", { name: "Step one clock cycle" });
     for (let i = 0; i < 5; i += 1) await step.click();
     await page.getByRole("button", { name: "EX: ADD X2, X0, X1", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "System Visualizer" })).toBeInViewport();
+    await expect(page.getByRole("heading", { name: "ARM Visualizer" })).toBeInViewport();
     const inspector = page.getByRole("region", { name: "Instruction inspector" });
     await expect(inspector.getByText("EX/MEM / #2")).toBeVisible();
     await expect(inspector.getByText("MEM/WB / #1")).toBeVisible();
@@ -39,6 +39,49 @@ test("inspect forwarding, stalls, retirement, history, and memory", async ({ pag
     await expect(page.locator(".memory-table td.written-byte").first()).toHaveText("05");
     await page.screenshot({ path: testInfo.outputPath("machine-completed.png"), fullPage: true });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    expect(errors).toEqual([]);
+});
+
+test("inspect learned predictions and compare loop execution with the static baseline", async ({ page }, testInfo) =>
+{
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    await page.goto("/");
+    await page.getByRole("textbox", { name: "Assembly program" }).fill("MOVZ X0, #10\nSUBS X0, X0, #1\nCBNZ X0, #-4\nHLT");
+    await page.getByRole("button", { name: "Load program", exact: true }).click();
+    const step = page.getByRole("button", { name: "Step one clock cycle" });
+    for (let i = 0; i < 9; i += 1) await step.click();
+    await page.getByRole("button", { name: "EX: CBNZ X0, #-4", exact: true }).click();
+    const inspector = page.getByRole("region", { name: "Instruction inspector" });
+    const predictor = page.getByRole("region", { name: "Branch predictor" });
+    await expect(inspector.getByText("Correct", { exact: true })).toBeVisible();
+    await expect(inspector.getByText("2 / Weak taken")).toBeVisible();
+    await expect(predictor.getByText("3 / Strong taken")).toBeVisible();
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: testInfo.outputPath("pipeline-prediction.jpg"), quality: 75 });
+    await page.getByRole("button", { name: "Inspect cycle 7, IF" }).click();
+    await expect(inspector.getByText("Correct", { exact: true })).toHaveCount(0);
+    await expect(predictor.getByText("2 / Weak taken")).toBeVisible();
+    await page.getByRole("button", { name: "Live", exact: true }).click();
+    await page.getByRole("slider", { name: "Clock speed" }).press("End");
+    await page.getByRole("button", { name: "Run", exact: true }).click();
+    await expect(page.getByText("Halted", { exact: true })).toBeVisible();
+    await expect(page.getByRole("slider", { name: "Recorded cycle" })).toHaveValue("30");
+    await expect(predictor.getByText("80.0%")).toBeVisible();
+    await expect(predictor.locator(".predictor-metrics")).toContainText("Resolved branches 10");
+    await expect(predictor.locator(".predictor-metrics")).toContainText("Mispredictions 2");
+    await predictor.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath("branch-predictor-table.jpg"), quality: 75 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.getByRole("combobox", { name: "Branch prediction" }).selectOption("not-taken");
+    await expect(page.getByRole("slider", { name: "Recorded cycle" })).toHaveValue("0");
+    await expect(page.getByRole("table", { name: "Branch target buffer" })).toHaveCount(0);
+    await page.getByRole("button", { name: "Run", exact: true }).click();
+    await expect(page.getByText("Halted", { exact: true })).toBeVisible();
+    await expect(page.getByRole("slider", { name: "Recorded cycle" })).toHaveValue("44");
+    await expect(predictor.locator(".predictor-metrics")).toContainText("Mispredictions 9");
+    await page.getByRole("combobox", { name: "Branch prediction" }).selectOption("two-bit");
+    await expect(predictor.getByText("No trained entries")).toBeVisible();
     expect(errors).toEqual([]);
 });
 

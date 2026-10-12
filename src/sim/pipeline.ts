@@ -1,6 +1,7 @@
 import type {
     CpuSnapshot, Instruction, PipelineStageSnapshot, PState, RegisterOperand, Word
 } from "./types";
+import type { BranchPrediction, BranchResolution, PredictorSnapshot } from "./prediction";
 
 export type StageName = PipelineStageSnapshot["name"];
 export type OperandSlot = "rn" | "rm" | "rd" | "base";
@@ -29,6 +30,8 @@ export interface PipelineToken
     storeValue?: Word;
     branchTaken?: boolean;
     branchTarget?: Word;
+    prediction?: BranchPrediction;
+    branchResolution?: BranchResolution;
     fault?: string;
 }
 
@@ -51,6 +54,7 @@ export interface PipelineSnapshot extends CpuSnapshot
     retired: number;
     stalls: number;
     flushed: number;
+    predictor: PredictorSnapshot;
     pipeline: PipelineStage[];
     latches: Record<LatchName, PipelineLatch>;
 }

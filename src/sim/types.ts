@@ -170,7 +170,7 @@ export interface CpuEvent
 {
     cycle: number;
     kind: "fetch" | "decode" | "execute" | "memory" | "writeback" | "halt" | "fault"
-        | "stall" | "flush" | "forward" | "branch";
+        | "stall" | "flush" | "forward" | "branch" | "prediction" | "mispredict";
     message: string;
     instanceId?: number;
 }

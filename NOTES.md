@@ -22,7 +22,7 @@ src/
     icache.ts              # I-cache (blocking), tags + refill FSM
     dcache.ts              # D-cache (blocking, write-through to start)
     tlb.ts                 # (later) simple TLB
-    predictor.ts           # (later) static/1-bit/2-bit + simple BTB
+    predictor.ts           # Implemented: tagged BTB + 2-bit counters; static comparison mode
 
 # Implementation Order:
 ### 1. Create the project shell
@@ -93,6 +93,8 @@ src/
 ### 8. Add advanced hardware features later
   - Instruction and data caches.
   - TLB.
-  - Branch predictor.
+  - [x] Branch predictor: 64-entry tagged BTB, 2-bit saturating counters, EX recovery,
+    always-not-taken comparison mode, per-instruction predictions, and historical table.
   - Cache misses and refill timing.
-  - Performance counters.
+  - Performance counters: pipeline/CPI and branch accuracy/misprediction/BTB counters
+    implemented; cache/TLB and memory-latency counters remain.
